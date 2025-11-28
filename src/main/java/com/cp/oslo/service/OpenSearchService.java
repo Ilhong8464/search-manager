@@ -1,0 +1,416 @@
+package com.cp.oslo.service;
+
+import com.cp.oslo.config.VectorFieldConfig;
+import com.cp.oslo.model.FieldDefinition;
+import com.cp.oslo.model.IndexDefinition;
+import com.cp.oslo.util.AnalyzerConfigLoader;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.opensearch.client.opensearch.OpenSearchClient;
+import org.opensearch.client.opensearch._types.mapping.*;
+import org.opensearch.client.opensearch.core.BulkRequest;
+import org.opensearch.client.opensearch.core.BulkResponse;
+import org.opensearch.client.opensearch.core.SearchResponse;
+import org.opensearch.client.opensearch.core.bulk.BulkResponseItem;
+import org.opensearch.client.opensearch.indices.CreateIndexRequest;
+import org.opensearch.client.opensearch.indices.DeleteIndexRequest;
+import org.opensearch.client.opensearch.indices.ExistsRequest;
+import org.opensearch.client.opensearch.indices.IndexSettings;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * OpenSearch 인덱스 및 문서 관리 서비스
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class OpenSearchService {
+
+    private final OpenSearchClient openSearchClient;
+    private final AnalyzerConfigLoader analyzerConfigLoader;
+    private final VectorFieldConfig vectorFieldConfig;
+
+    /**
+     * 인덱스 생성
+     */
+    public boolean createIndex(IndexDefinition definition) {
+        try {
+            // 인덱스 존재 여부 확인
+            if (indexExists(definition.getIndexName())) {
+                log.warn("인덱스가 이미 존재합니다: {}", definition.getIndexName());
+                return false;
+            }
+
+            // 매핑 생성 (YAML 벡터 필드 포함)
+            Map<String, Property> properties = createMappingProperties(
+                    definition.getFields(), 
+                    definition.getIndexName()
+            );
+
+            // 인덱스 설정 생성 (analyzer 포함)
+            IndexSettings indexSettings = createIndexSettings(
+                    1, // 기본값 하드코딩 또는 definition에 추가 가능
+                    1, // 기본값 하드코딩
+                    definition.getIndexName()
+            );
+
+            // 인덱스 생성 요청
+            CreateIndexRequest createIndexRequest = CreateIndexRequest.of(c -> c
+                    .index(definition.getIndexName())
+                    .settings(indexSettings)
+                    .mappings(m -> m.properties(properties))
+            );
+
+            openSearchClient.indices().create(createIndexRequest);
+            log.info("인덱스 생성 완료: {}", definition.getIndexName());
+            return true;
+
+        } catch (Exception e) {
+            log.error("인덱스 생성 실패: {}", definition.getIndexName(), e);
+            throw new RuntimeException("인덱스 생성 실패", e);
+        }
+    }
+
+    /**
+     * 인덱스 삭제
+     */
+    public boolean deleteIndex(String indexName) {
+        try {
+            if (!indexExists(indexName)) {
+                log.warn("인덱스가 존재하지 않습니다: {}", indexName);
+                return false;
+            }
+
+            DeleteIndexRequest request = DeleteIndexRequest.of(d -> d.index(indexName));
+            openSearchClient.indices().delete(request);
+            log.info("인덱스 삭제 완료: {}", indexName);
+            return true;
+
+        } catch (Exception e) {
+            log.error("인덱스 삭제 실패: {}", indexName, e);
+            throw new RuntimeException("인덱스 삭제 실패", e);
+        }
+    }
+
+    /**
+     * 인덱스 존재 여부 확인
+     */
+    public boolean indexExists(String indexName) {
+        try {
+            ExistsRequest request = ExistsRequest.of(e -> e.index(indexName));
+            return openSearchClient.indices().exists(request).value();
+        } catch (Exception e) {
+            log.error("인덱스 존재 여부 확인 실패: {}", indexName, e);
+            return false;
+        }
+    }
+
+    /**
+     * Bulk 문서 인덱싱
+     */
+    public BulkIndexResult bulkIndex(String indexName, List<Map<String, Object>> documents) {
+        try {
+            BulkRequest.Builder bulkBuilder = new BulkRequest.Builder();
+
+            for (Map<String, Object> doc : documents) {
+                String docId = doc.get("id") != null ? doc.get("id").toString() : null;
+                bulkBuilder.operations(op -> op
+                        .index(idx -> idx
+                                .index(indexName)
+                                .id(docId)
+                                .document(doc)
+                        )
+                );
+            }
+
+            BulkResponse result = openSearchClient.bulk(bulkBuilder.build());
+
+            long successCount = 0;
+            long failCount = 0;
+            String firstErrorReason = null;
+
+            if (result.errors()) {
+                for (BulkResponseItem item : result.items()) {
+                    if (item.error() != null) {
+                        failCount++;
+                        // 첫 번째 에러만 저장
+                        if (firstErrorReason == null) {
+                            firstErrorReason = item.error().reason();
+                        }
+                    } else {
+                        successCount++;
+                    }
+                }
+                // 실패가 있을 때만 첫 번째 에러만 로그
+                if (failCount > 0) {
+                    log.warn("Bulk 인덱싱 중 {}건 실패 (첫 번째 에러: {})", failCount, firstErrorReason);
+                }
+            } else {
+                successCount = documents.size();
+            }
+
+            return new BulkIndexResult(successCount, failCount, result.errors());
+
+        } catch (Exception e) {
+            log.error("Bulk 인덱싱 실패", e);
+            throw new RuntimeException("Bulk 인덱싱 실패", e);
+        }
+    }
+
+    /**
+     * 단건 문서 인덱싱
+     */
+    public boolean indexDocument(String indexName, Map<String, Object> document) {
+        try {
+            String docId = null;
+            if (document.get("id") != null) {
+                docId = document.get("id").toString();
+            } else if (document.get("UUID") != null) {
+                docId = document.get("UUID").toString();
+            } else if (document.get("uuid") != null) {
+                docId = document.get("uuid").toString();
+            }
+
+            final String finalDocId = docId;
+
+            openSearchClient.index(i -> i
+                    .index(indexName)
+                    .id(finalDocId)
+                    .document(document)
+            );
+
+            return true;
+        } catch (Exception e) {
+            log.error("문서 인덱싱 실패: index={}, doc={}", indexName, document, e);
+            throw new RuntimeException("문서 인덱싱 실패", e);
+        }
+    }
+    
+    // 검색 메서드들은 변경 없음 (String indexName 사용)
+    public SearchResponse<Map> search(String indexName, String query, String operator, Integer size) {
+        // ... (기존 코드 유지)
+        try {
+            // operator 기본값 및 검증
+            String defaultOperator = (operator != null && "AND".equalsIgnoreCase(operator)) ? "AND" : "OR";
+
+            // size 기본값 및 제한 (최소 1, 최대 100, 기본 10)
+            int resultSize = 10;
+            if (size != null) {
+                resultSize = Math.max(1, Math.min(size, 100));
+            }
+            
+            // Determine target fields based on indexName
+            List<String> targetFields;
+            if ("call".equals(indexName)) {
+                targetFields = List.of("QUESTION", "ANSWER"); // 대문자로 변경 (IndexRegistry와 일치)
+            } else if ("manual-qna".equals(indexName) || "manual".equals(indexName)) {
+                targetFields = List.of("TITLE", "CONTENTS");
+            } else if ("doc-notice".equals(indexName)) {
+                targetFields = List.of("DOC_NM", "CONTENTS");
+            } else { 
+                targetFields = List.of("TITLE", "CONTENTS");
+            }    
+
+            final int finalSize = resultSize;
+            final String finalOperator = defaultOperator;
+
+            SearchResponse<Map> response = openSearchClient.search(s -> s
+                            .index(indexName)
+                            .size(finalSize)
+                            .query(q -> q
+                                    .multiMatch(m -> m
+                                            .fields(targetFields)
+                                            .query(query)
+                                            .operator("AND".equalsIgnoreCase(finalOperator)
+                                                    ? org.opensearch.client.opensearch._types.query_dsl.Operator.And
+                                                    : org.opensearch.client.opensearch._types.query_dsl.Operator.Or
+                                            )
+                                            .type(org.opensearch.client.opensearch._types.query_dsl.TextQueryType.CrossFields)
+                                    )
+                            ),
+                    Map.class
+            );
+            log.info("OpenSearch response: {} hits", response.hits().total().value());
+            return response;
+        } catch (Exception e) {
+            log.error("검색 실패", e);
+            throw new RuntimeException("검색 실패", e);
+        }
+    }
+
+    public SearchResponse<Map> vectorSearch(String indexName, String vectorFieldName, List<Double> queryVector, Integer k) {
+        // ... (기존 코드 유지)
+        try {
+            int resultSize = 10;
+            if (k != null) {
+                resultSize = Math.max(1, Math.min(k, 100));
+            }
+            final int finalK = resultSize;
+            float[] vectorArray = new float[queryVector.size()];
+            for (int i = 0; i < queryVector.size(); i++) {
+                vectorArray[i] = queryVector.get(i).floatValue();
+            }
+            SearchResponse<Map> response = openSearchClient.search(s -> s
+                            .index(indexName)
+                            .size(finalK)
+                            .query(q -> q
+                                    .knn(knn -> knn
+                                            .field(vectorFieldName)
+                                            .vector(vectorArray)
+                                            .k(finalK)
+                                    )
+                            ),
+                    Map.class
+            );
+            return response;
+        } catch (Exception e) {
+            throw new RuntimeException("벡터 검색 실패", e);
+        }
+    }
+
+    public SearchResponse<Map> hybridSearch(String indexName, List<String> textFields, String vectorFieldName, 
+                                           String queryText, List<Double> queryVector, 
+                                           Double textWeight, Integer size) {
+        // ... (기존 코드 유지)
+        try {
+            double textScore = (textWeight != null) ? Math.max(0.0, Math.min(textWeight, 1.0)) : 0.5;
+            double vectorScore = 1.0 - textScore;
+            int resultSize = 10;
+            if (size != null) {
+                resultSize = Math.max(1, Math.min(size, 100));
+            }
+            final int finalSize = resultSize;
+            final double finalTextScore = textScore;
+            final double finalVectorScore = vectorScore;
+            float[] vectorArray = new float[queryVector.size()];
+            for (int i = 0; i < queryVector.size(); i++) {
+                vectorArray[i] = queryVector.get(i).floatValue();
+            }
+            SearchResponse<Map> response = openSearchClient.search(s -> s
+                            .index(indexName)
+                            .size(finalSize)
+                            .query(q -> q
+                                    .bool(b -> b
+                                            .should(sh -> sh
+                                                    .multiMatch(mm -> mm
+                                                            .fields(textFields)
+                                                            .query(queryText)
+                                                            .boost((float) finalTextScore)
+                                                    )
+                                            )
+                                            .should(sh -> sh
+                                                    .knn(knn -> knn
+                                                            .field(vectorFieldName)
+                                                            .vector(vectorArray)
+                                                            .k(finalSize)
+                                                            .boost((float) finalVectorScore)
+                                                    )
+                                            )
+                                    )
+                            ),
+                    Map.class
+            );
+            return response;
+        } catch (Exception e) {
+            throw new RuntimeException("하이브리드 검색 실패", e);
+        }
+    }
+
+    /**
+     * 인덱스 설정 생성 (custom analyzer 포함)
+     */
+    private IndexSettings createIndexSettings(Integer numberOfShards, Integer numberOfReplicas, String indexName) {
+        List<String> synonyms = analyzerConfigLoader.loadSynonyms();
+        List<String> stopwords = analyzerConfigLoader.loadStopwords();
+        
+        IndexSettings.Builder builder = new IndexSettings.Builder()
+                .numberOfShards(String.valueOf(numberOfShards))
+                .numberOfReplicas(String.valueOf(numberOfReplicas))
+                .analysis(a -> a
+                        .filter("synonym_filter", tf -> tf
+                                .definition(tfd -> tfd.synonym(syn -> syn.synonyms(synonyms))))
+                        .filter("stopword_filter", tf -> tf
+                                .definition(tfd -> tfd.stop(stop -> stop.stopwords(stopwords))))
+                        .analyzer("nori_custom", an -> an
+                                .custom(ca -> ca
+                                        .tokenizer("nori_tokenizer")
+                                        .filter("lowercase", "synonym_filter", "stopword_filter", "nori_readingform")
+                                )
+                        )
+                );
+
+        if (vectorFieldConfig.hasVectorField(indexName)) {
+            builder.knn(true);
+        }
+        return builder.build();
+    }
+
+    /**
+     * 필드 매핑을 OpenSearch Property로 변환
+     */
+    private Map<String, Property> createMappingProperties(List<FieldDefinition> fields, String indexName) {
+        Map<String, Property> properties = new HashMap<>();
+
+        for (FieldDefinition field : fields) {
+            String fieldName = field.getEffectiveFieldName();
+            Property property = convertToProperty(field);
+            properties.put(fieldName, property);
+        }
+
+        // YAML 설정의 벡터 필드 추가
+        if (vectorFieldConfig.hasVectorField(indexName)) {
+            VectorFieldConfig.VectorField vectorField = vectorFieldConfig.getVectorField(indexName);
+            Property vectorProperty = Property.of(p -> p.knnVector(knn -> 
+                knn.dimension(vectorField.getDimension())
+                   .method(method -> method
+                       .name("hnsw")
+                       .spaceType(vectorField.getSpaceType())
+                       .engine(vectorField.getEngine())
+                   )
+            ));
+            properties.put(vectorField.getTargetField(), vectorProperty);
+        }
+
+        return properties;
+    }
+
+    /**
+     * FieldDefinition을 OpenSearch Property로 변환
+     */
+    private Property convertToProperty(FieldDefinition field) {
+        return switch (field.getType()) {
+            case TEXT -> Property.of(p -> p.text(t -> {
+                if (field.getAnalyzer() != null) {
+                    String analyzer = "nori".equals(field.getAnalyzer()) 
+                            ? "nori_custom" 
+                            : field.getAnalyzer();
+                    t.analyzer(analyzer);
+                }
+                return t;
+            }));
+            case KEYWORD -> Property.of(p -> p.keyword(k -> k));
+            case INTEGER -> Property.of(p -> p.integer(i -> i));
+            case LONG -> Property.of(p -> p.long_(l -> l));
+            case DOUBLE -> Property.of(p -> p.double_(d -> d));
+            case FLOAT -> Property.of(p -> p.float_(f -> f));
+            case BOOLEAN -> Property.of(p -> p.boolean_(b -> b));
+            case DATE -> Property.of(p -> p.date(d -> d));
+            case KNN_VECTOR -> Property.of(p -> p.knnVector(knn -> {
+                int dimension = field.getDimension() != null ? field.getDimension() : 768;
+                return knn.dimension(dimension)
+                          .method(method -> method.name("hnsw").spaceType("cosinesimil").engine("lucene"));
+            }));
+            default -> Property.of(p -> p.text(t -> t));
+        };
+    }
+
+    /**
+     * Bulk 인덱싱 결과
+     */
+    public record BulkIndexResult(long successCount, long failCount, boolean hasErrors) {
+    }
+}

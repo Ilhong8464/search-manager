@@ -1,0 +1,63 @@
+{
+  "indexName": "products",
+  "description": "상품 검색 인덱스",
+  "sourceTableName": "products",
+  "numberOfShards": 1,
+  "numberOfReplicas": 1,
+  "enabled": true,
+  "autoSync": false,
+  "syncIntervalMinutes": 30,
+  "fieldMappings": [
+    {
+      "sourceColumnName": "id",
+      "fieldType": "LONG",
+      "indexed": true,
+      "sortOrder": 0
+    },
+    {
+      "sourceColumnName": "name",
+      "targetFieldName": "product_name",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 1
+    },
+    {
+      "sourceColumnName": "description",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 2
+    },
+    {
+      "sourceColumnName": "price",
+      "fieldType": "DOUBLE",
+      "indexed": true,
+      "sortOrder": 3
+    },
+    {
+      "sourceColumnName": "stock",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 4
+    },
+    {
+      "sourceColumnName": "category",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 5
+    },
+    {
+      "sourceColumnName": "created_at",
+      "fieldType": "DATETIME",
+      "indexed": true,
+      "sortOrder": 6
+    },
+    {
+      "sourceColumnName": "updated_at",
+      "fieldType": "DATETIME",
+      "indexed": true,
+      "sortOrder": 7
+    }
+  ]
+}

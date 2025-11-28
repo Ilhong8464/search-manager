@@ -1,0 +1,97 @@
+spring:
+  application:
+    name: search-manager
+
+  datasource:
+    url: '${DB_URL}'
+    username: '${DB_USERNAME}'
+    password: '${DB_PASS}'
+    driver-class-name: '${DB_DRIVER}'
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+    open-in-view: false
+
+server:
+  port: '${SERVER_PORT}'
+
+# 검색 관리자 설정
+search:
+  sync:
+    cron: '${SEARCH_SYNC_CRON:0 0 1 * * *}'  # 매일 새벽 1시 전체 동기화
+  indexes:
+    manual:
+      enabled: true
+      auto-sync: false
+      sync-interval-minutes: 60 #설정 시간(분)마다 실행
+    manual-qna:
+      enabled: true
+      auto-sync: false
+      sync-interval-minutes: 60 #설정 시간(분)마다 실행
+    call:
+      enabled: true
+      auto-sync: false
+      sync-interval-minutes: 10 #call인덱스는 마지막 동기화시간(DB의 sync_history테이블)으로부터 설정한 시간(분) 후 다시 시작
+    doc-notice:
+      enabled: true
+      auto-sync: false
+      sync-interval-minutes: 30 #설정 시간(분)마다 실행
+
+# OpenSearch 설정
+opensearch:
+  host: '${OPEN_SEARCH_HOST:localhost}'
+  port: '${OPEN_SEARCH_PORT_1:9200}'
+  scheme: http
+  username: '${OPEN_SEARCH_USERNAME:admin}'
+  password: '${OPEN_SEARCH_PASSWORD:admin}'
+  connect-timeout: 5000
+  socket-timeout: 60000
+
+# 로깅 파일 설정 (logback-spring.xml에서 참조)
+logging:
+  file:
+    path: '${UPLOAD_PATH:/app/upload}'
+
+# 임베딩 서비스 설정
+embedding:
+  service:
+    url: '${EMBEDDING_URL}:${EMBEDDING_PORT}'
+  # 각 인덱스별 벡터 필드 설정
+  vector-fields:
+    manual:
+      source-field: TITLE,CONTENTS  # 임베딩을 생성할 원본 필드 (쉼표로 구분하여 여러 필드 지정 가능)
+      target-field: embedding       # 벡터가 저장될 필드
+      dimension: 768                # 벡터 차원
+      engine: lucene                # k-NN 엔진 (lucene, nmslib, faiss)
+      space-type: cosinesimil       # 거리 측정 (cosinesimil, l2, innerproduct)
+    manual-qna:
+      source-field: TITLE,CONTENTS  # title과 contents를 합쳐서 임베딩 생성
+      target-field: embedding
+      dimension: 768
+      engine: lucene
+      space-type: cosinesimil
+    call:
+      source-field: QUESTION,ANSWER  # question과 answer를 합쳐서 임베딩 생성
+      target-field: embedding
+      dimension: 768
+      engine: lucene
+      space-type: cosinesimil
+    doc-notice:
+      source-field: DOC_NM,CONTENTS  # doc_nm과 contents를 합쳐서 임베딩 생성
+      target-field: embedding
+      dimension: 768
+      engine: lucene
+      space-type: cosinesimil
+
+

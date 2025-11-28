@@ -1,0 +1,227 @@
+{
+  "indexName": "manual",
+  "description": "매뉴얼 검색 인덱스 (uvw_manual 뷰)",
+  "sourceTableName": "uvw_manual",
+  "numberOfShards": 1,
+  "numberOfReplicas": 1,
+  "enabled": true,
+  "autoSync": false,
+  "fieldMappings": [
+    {
+      "sourceColumnName": "MANUAL_ID",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 0
+    },
+    {
+      "sourceColumnName": "MANUAL_UUID",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 1
+    },
+    {
+      "sourceColumnName": "CAT_NM",
+      "targetFieldName": "cat_nm",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 2
+    },
+    {
+      "sourceColumnName": "FULL_CAT_NM",
+      "targetFieldName": "full_cat_nm",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 3
+    },
+    {
+      "sourceColumnName": "CAT_NM_1",
+      "targetFieldName": "cat_nm_1",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 4
+    },
+    {
+      "sourceColumnName": "CAT_NM_2",
+      "targetFieldName": "cat_nm_2",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 5
+    },
+    {
+      "sourceColumnName": "CAT_NM_3",
+      "targetFieldName": "cat_nm_3",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 6
+    },
+    {
+      "sourceColumnName": "IMPORTANCE",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 7
+    },
+    {
+      "sourceColumnName": "IMPORTANCE_NM",
+      "targetFieldName": "importance_nm",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 8
+    },
+    {
+      "sourceColumnName": "TITLE",
+      "targetFieldName": "title",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 9
+    },
+    {
+      "sourceColumnName": "CONTENTS",
+      "targetFieldName": "contents",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 10
+    },
+    {
+      "sourceColumnName": "HTML",
+      "targetFieldName": "html",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 11
+    },
+    {
+      "sourceColumnName": "DESCRIPTION",
+      "targetFieldName": "description",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 12
+    },
+    {
+      "sourceColumnName": "DEPT_ID",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 13
+    },
+    {
+      "sourceColumnName": "FULL_DEPT_NM",
+      "targetFieldName": "full_dept_nm",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 14
+    },
+    {
+      "sourceColumnName": "CHARGE_ID",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 15
+    },
+    {
+      "sourceColumnName": "CHARGE_NM",
+      "targetFieldName": "charge_nm",
+      "fieldType": "TEXT",
+      "analyzer": "nori",
+      "indexed": true,
+      "sortOrder": 16
+    },
+    {
+      "sourceColumnName": "READ_CNT",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 17
+    },
+    {
+      "sourceColumnName": "CONFIRM_CNT",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 18
+    },
+    {
+      "sourceColumnName": "TOT_READ_CNT",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 19
+    },
+    {
+      "sourceColumnName": "TOT_CONFIRM_CNT",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 20
+    },
+    {
+      "sourceColumnName": "MANUAL_QNA_CNT",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 21
+    },
+    {
+      "sourceColumnName": "START_YMD",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 22
+    },
+    {
+      "sourceColumnName": "END_YMD",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 23
+    },
+    {
+      "sourceColumnName": "USE_YN",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 24
+    },
+    {
+      "sourceColumnName": "DEL_YN",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 25
+    },
+    {
+      "sourceColumnName": "RGTR_ID",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 26
+    },
+    {
+      "sourceColumnName": "RGTR_NM",
+      "targetFieldName": "rgtr_nm",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 27
+    },
+    {
+      "sourceColumnName": "REG_DT",
+      "targetFieldName": "reg_dt",
+      "fieldType": "DATETIME",
+      "indexed": true,
+      "sortOrder": 28
+    },
+    {
+      "sourceColumnName": "MDFR_ID",
+      "fieldType": "INTEGER",
+      "indexed": true,
+      "sortOrder": 29
+    },
+    {
+      "sourceColumnName": "MDFR_NM",
+      "targetFieldName": "mdfr_nm",
+      "fieldType": "KEYWORD",
+      "indexed": true,
+      "sortOrder": 30
+    },
+    {
+      "sourceColumnName": "MDF_DT",
+      "targetFieldName": "mdf_dt",
+      "fieldType": "DATETIME",
+      "indexed": true,
+      "sortOrder": 31
+    }
+  ]
+}
