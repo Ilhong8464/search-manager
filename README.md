@@ -26,60 +26,114 @@ MariaDB 데이터를 OpenSearch로 인덱싱하고 검색하는 Spring Boot 애�
 
 - JDK 17 이상
 - MariaDB 10.x 이상
-- OpenSearch 2.x 실행 중 (http://localhost:9200)
+- Docker 및 Docker Compose
+- Python 3.10+ (Embedding Service용)
 
-### 2. 데이터베이스 설정
+### 2. .env 파일 설정
 
-`src/main/resources/application.yml` 파일에서 MariaDB 연결 정보를 설정합니다:
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:mariadb://localhost:3306/your_database
-    username: your_username
-    password: your_password
-```
-
-### 3. OpenSearch 설정
-
-`application.yml` 파일에서 OpenSearch 연결 정보를 설정합니다:
-
-```yaml
-opensearch:
-  host: localhost
-  port: 9200
-  scheme: http
-  username: admin
-  password: admin
-```
-
-### 4. 애플리케이션 실행
+프로젝트의 각 서비스(`search-manager`, `opensearch`, `embedding-service`)는 `.env` 파일을 통해 환경 변수를 설정합니다. `env.example` 파일을 복사하여 `.env` 파일을 생성하고 필요한 값을 설정합니다.
 
 ```bash
-# Gradle로 실행
+cp .env.example .env
+# embedding-service 디렉토리에도 .env 파일 생성
+cp embedding-service/.env.example embedding-service/.env
+```
+
+`.env` 파일에서 다음 변수들을 확인하고 필요에 따라 수정합니다:
+*   `DB_URL`, `DB_USERNAME`, `DB_PASS`: MariaDB 연결 정보
+*   `OPEN_SEARCH_HOST`, `OPEN_SEARCH_PORT_1`, `OPEN_SEARCH_USERNAME`, `OPEN_SEARCH_PASSWORD`: OpenSearch 연결 정보
+*   `EMBEDDING_URL`, `EMBEDDING_PORT`: Embedding Service 연결 정보
+*   `OPENSEARCH_INITIAL_ADMIN_PASSWORD`: OpenSearch 초기 관리자 비밀번호 (필요시 설정)
+
+### 3. OpenSearch 및 Nori 플러그인 실행
+
+`analysis-nori` 플러그인이 포함된 OpenSearch 이미지를 빌드하고 실행합니다. 프로젝트 내 `opensearch/Dockerfile`을 사용합니다.
+
+```bash
+# 1. OpenSearch 이미지 빌드 (analysis-nori 플러그인 포함)
+# 이 명령은 opensearch/Dockerfile을 사용하여 'custom-opensearch:3.3.2' 이미지를 생성합니다.
+docker build -t custom-opensearch:3.3.2 ./opensearch
+
+# 2. OpenSearch 컨테이너 실행
+# .env 파일에 설정된 포트(9200, 9600)로 OpenSearch를 실행합니다.
+# 개발 편의를 위해 보안 플러그인이 비활성화된 상태로 실행됩니다.
+docker run -d \
+  --name opensearch-node \
+  -p ${OPEN_SEARCH_PORT_1:-9200}:9200 \
+  -p ${OPEN_SEARCH_PORT_2:-9600}:9600 \
+  -e "discovery.type=single-node" \
+  -e "cluster.name=opensearch-cluster" \
+  -e "node.name=opensearch-node" \
+  -e "DISABLE_SECURITY_PLUGIN=true" \
+  -e "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" \
+  custom-opensearch:3.3.2
+```
+
+### 4. Embedding Service 실행
+
+OpenSearch가 실행된 후, 벡터 임베딩을 제공하는 Embedding Service를 실행합니다.
+
+```bash
+# 1. embedding-service 디렉토리로 이동
+cd embedding-service
+
+# 2. Python 가상 환경 생성 및 활성화
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. 필요한 라이브러리 설치 (requirements.txt에 명시된 버전으로 설치, uvicorn 포함)
+pip install -r requirements.txt
+
+# 4. Embedding Service 실행 (백그라운드 실행을 권장합니다)
+# .env 파일에 설정된 EMBEDDING_PORT (기본 8000)로 실행됩니다.
+uvicorn embedding_service:app --host 0.0.0.0 --port ${EMBEDDING_PORT:-8000}
+```
+
+### 5. Spring Boot 애플리케이션 실행
+
+Spring Boot 애플리케이션을 실행하기 전에, `.env` 파일에 설정된 환경 변수를 애플리케이션이 인식하도록 해야 합니다.
+
+#### 5.1. IntelliJ IDEA에서 실행 (권장)
+
+IntelliJ IDEA에서 `.env` 파일을 통해 환경 변수를 로드하려면 'EnvFile' 플러그인을 설치하는 것을 권장합니다.
+
+1.  **EnvFile 플러그인 설치**:
+    *   IntelliJ IDEA 설정(Preferences/Settings)에서 'Plugins'를 검색합니다.
+    *   'Marketplace' 탭에서 'EnvFile'을 검색하여 설치합니다.
+    *   IntelliJ IDEA를 재시작합니다.
+2.  **실행 구성(Run/Debug Configurations) 설정**:
+    *   `SearchManagerApplication`을 선택하거나 새로운 Spring Boot 실행 구성을 생성합니다.
+    *   'Environment variables' 섹션에서 'Enable EnvFile' 체크박스를 선택합니다.
+    *   '+' 버튼을 클릭하여 프로젝트 루트에 있는 `.env` 파일을 추가합니다.
+    *   'Apply' 또는 'OK'를 클릭하여 설정을 저장합니다.
+
+이제 `SearchManagerApplication`을 실행하면 `.env` 파일의 환경 변수들이 자동으로 로드됩니다.
+
+#### 5.2. Gradle 또는 JAR 파일로 실행
+
+`.env` 파일 없이 Gradle 또는 빌드된 JAR 파일로 실행할 경우, `application.yml` 또는 시스템 환경 변수를 통해 직접 설정해야 합니다.
+
+```bash
+# Gradle로 실행 (환경 변수를 직접 넘겨주어야 할 수 있습니다)
 ./gradlew bootRun
 
-# 또는 JAR 빌드 후 실행
+# 또는 JAR 빌드 후 실행 (환경 변수를 직접 넘겨주어야 할 수 있습니다)
 ./gradlew build
 java -jar build/libs/search-manager-1.0.0.jar
 ```
 
-애플리케이션은 기본적으로 `http://localhost:8080`에서 실행됩니다.
+애플리케이션은 기본적으로 `http://localhost:9400`에서 실행됩니다 (SERVER_PORT 변수에 따름).
 
 ## 빠른 시작: uvw_manual 인덱싱
 
-가장 간단한 방법으로 uvw_manual 뷰를 OpenSearch에 인덱싱하려면:
+**OpenSearch 및 Embedding Service가 먼저 실행 중인지 확인하세요.**
 
 ```bash
-# 1. 애플리케이션 실행
-./gradlew bootRun
+# 1. 인덱스 생성 (인덱스 생성 + 데이터 동기화 자동 처리)
+curl -X POST http://localhost:9400/api/v1/manual/create-index
 
-# 2. 인덱스 생성 (인덱스 생성 + 데이터 동기화 자동 처리)
-curl -X POST http://localhost:8080/api/v1/manual/create-index
-
-# 3. 검색 테스트
-curl "http://localhost:8080/api/v1/search/manual?query=시의원"
-```
+# 2. 검색 테스트
+curl "http://localhost:9400/api/v1/search/manual?query=시의원"
 
 자세한 가이드는 [examples/MANUAL_INDEX_README.md](examples/MANUAL_INDEX_README.md)를 참고하세요.
 
@@ -152,44 +206,39 @@ curl http://localhost:8080/api/v1/indexes/1
 
 ```bash
 # 특정 인덱스 동기화
-curl -X POST http://localhost:8080/api/v1/indexes/1/sync
+curl -X POST http://localhost:9400/api/v1/indexes/1/sync
 
 # 모든 활성화된 인덱스 동기화
-curl -X POST http://localhost:8080/api/v1/indexes/sync-all
+curl -X POST http://localhost:9400/api/v1/indexes/sync-all
 ```
 
 ### 5. 동기화 이력 조회
 
 ```bash
-curl http://localhost:8080/api/v1/indexes/1/history
+curl http://localhost:9400/api/v1/indexes/1/history
 ```
 
 ### 6. 검색 실행
 
 ```bash
 # 전체 검색
-curl "http://localhost:8080/api/v1/search/products?query=*"
+curl "http://localhost:9400/api/v1/search/products?query=*"
 
 # 특정 키워드 검색
-curl "http://localhost:8080/api/v1/search/products?query=노트북"
+curl "http://localhost:9400/api/v1/search/products?query=노트북"
 ```
 
 ### 7. 인덱스 삭제
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/indexes/1
+curl -X DELETE http://localhost:9400/api/v1/indexes/1
 ```
 
 ## 한국어 검색 설정
 
 한국어 형태소 분석을 위해서는 OpenSearch의 `analysis-nori` 플러그인을 사용합니다.
 
-### OpenSearch Nori 플러그인 설치
 
-```bash
-# OpenSearch 디렉토리에서 실행
-bin/opensearch-plugin install analysis-nori
-```
 
 ### 한국어 인덱스 설정 예제
 
@@ -266,28 +315,3 @@ search-manager/
 └── build.gradle
 ```
 
-## 문제 해결
-
-### OpenSearch 연결 실패
-
-```
-Error: Connection refused
-```
-
-OpenSearch가 실행 중인지 확인하세요:
-```bash
-curl http://localhost:9200
-```
-
-### 데이터베이스 연결 실패
-
-`application.yml`의 데이터베이스 연결 정보를 확인하세요.
-
-### 인덱싱 실패
-
-- 테이블 이름과 컬럼 이름이 정확한지 확인
-- 필드 매핑 타입이 데이터베이스 컬럼 타입과 호환되는지 확인
-
-## 라이선스
-
-MIT License

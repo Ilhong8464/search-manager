@@ -1,19 +1,19 @@
 # Web Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-multipart==0.0.6
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
 
-# Embedding Models (Python 3.9 호환 버전)
-torch==2.1.0
-transformers==4.35.0
-sentence-transformers==2.2.2
-huggingface_hub==0.17.3
+# Embedding Models (Python 3.13 호환 버전)
+torch>=2.6.0
+transformers>=4.35.0
+sentence-transformers>=2.2.2
+huggingface_hub>=0.17.3
 
 # SSL 경고 해결
-urllib3==1.26.18
+urllib3>=1.26.18
 
 # Utilities
-numpy==1.24.3
-pydantic==2.5.0
-python-dotenv==1.0.0
-loguru==0.7.2
+numpy>=1.26.0
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+loguru>=0.7.2
