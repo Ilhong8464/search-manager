@@ -1,6 +1,10 @@
 package com.cp.oslo.controller;
 
+import com.cp.oslo.config.IndexRegistry;
+import com.cp.oslo.domain.IndexState;
+import com.cp.oslo.repository.IndexStateRepository;
 import com.cp.oslo.service.IndexingService;
+import com.cp.oslo.service.OpenSearchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +24,45 @@ import java.util.Map;
 public class CallIndexController {
 
     private final IndexingService indexingService;
+    private final IndexRegistry indexRegistry;
+    private final OpenSearchService openSearchService;
+    private final IndexStateRepository indexStateRepository;
+
+    /**
+     * call 인덱스 정보를 조회합니다.
+     *
+     * GET /api/v1/call/info
+     */
+    @GetMapping("/info")
+    public ResponseEntity<Map<String, Object>> getCallIndexInfo() {
+        String indexName = "call";
+        var definition = indexRegistry.get(indexName);
+
+        if (definition == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> info = new HashMap<>();
+        boolean exists = openSearchService.indexExists(indexName);
+        IndexState state = indexStateRepository.findById(indexName).orElse(null);
+
+        info.put("indexName", indexName);
+        info.put("sourceTable", definition.getSourceTableName());
+        info.put("description", definition.getDescription());
+        info.put("exists", exists);
+        info.put("enabled", true);
+        info.put("fieldMappingsCount", definition.getFields().size());
+
+        if (state != null) {
+            info.put("lastSyncTime", state.getLastSyncTime());
+            info.put("lastSyncStatus", state.getLastSyncStatus());
+        }
+
+        info.put("syncUrl", "/api/v1/call/sync");
+        info.put("searchUrl", "/api/v1/search/call?query=키워드");
+
+        return ResponseEntity.ok(info);
+    }
 
     /**
      * uvw_call 인덱스를 생성하고 데이터를 동기화합니다.
@@ -54,7 +97,4 @@ public class CallIndexController {
             return ResponseEntity.internalServerError().body(result);
         }
     }
-    
-    // info 메서드는 복잡성을 피하기 위해 제거하거나, 상태 조회 서비스가 있다면 연결할 수 있습니다.
-    // 현재는 제거합니다.
 }

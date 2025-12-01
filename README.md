@@ -56,7 +56,6 @@ docker build -t custom-opensearch:3.3.2 ./opensearch
 
 # 2. OpenSearch 컨테이너 실행
 # .env 파일에 설정된 포트(9200, 9600)로 OpenSearch를 실행합니다.
-# 개발 편의를 위해 보안 플러그인이 비활성화된 상태로 실행됩니다.
 docker run -d \
   --name opensearch-node \
   -p ${OPEN_SEARCH_PORT_1:-9200}:9200 \
@@ -134,6 +133,7 @@ curl -X POST http://localhost:9400/api/v1/manual/create-index
 
 # 2. 검색 테스트
 curl "http://localhost:9400/api/v1/search/manual?query=시의원"
+```
 
 자세한 가이드는 [examples/MANUAL_INDEX_README.md](examples/MANUAL_INDEX_README.md)를 참고하세요.
 
@@ -242,44 +242,33 @@ curl -X DELETE http://localhost:9400/api/v1/indexes/1
 
 ### 한국어 인덱스 설정 예제
 
+`examples/manual-index-config.json` 파일의 일부입니다.
+
 ```json
 {
-  "indexName": "korean_products",
-  "sourceTableName": "products",
+  "indexName": "manual",
+  "sourceTableName": "uvw_manual",
   "fieldMappings": [
     {
-      "sourceColumnName": "name",
+      "sourceColumnName": "TITLE",
+      "targetFieldName": "title",
       "fieldType": "TEXT",
       "analyzer": "nori"
     },
     {
-      "sourceColumnName": "description",
+      "sourceColumnName": "CONTENTS",
+      "targetFieldName": "contents",
+      "fieldType": "TEXT",
+      "analyzer": "nori"
+    },
+    {
+      "sourceColumnName": "HTML",
+      "targetFieldName": "html",
       "fieldType": "TEXT",
       "analyzer": "nori"
     }
   ]
 }
-```
-
-## 데이터베이스 스키마 예제
-
-```sql
-CREATE TABLE products (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    price DECIMAL(10, 2),
-    stock INT,
-    category VARCHAR(100),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
--- 샘플 데이터
-INSERT INTO products (name, description, price, stock, category) VALUES
-('노트북', '고성능 게이밍 노트북', 1500000.00, 10, '전자제품'),
-('무선 마우스', '인체공학적 디자인', 35000.00, 50, '액세서리'),
-('키보드', '기계식 키보드', 120000.00, 30, '액세서리');
 ```
 
 ## 필드 타입

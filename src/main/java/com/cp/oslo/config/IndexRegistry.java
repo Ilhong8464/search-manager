@@ -27,7 +27,7 @@ public class IndexRegistry {
         definitions.put("manual", IndexDefinition.builder()
                 .indexName("manual")
                 .sourceTableName("uvw_manual")
-                .description("업무 매뉴얼")
+                .description("매뉴얼")
                 .idColumn("MANUAL_UUID")
                 .fields(List.of(
                         field("MANUAL_UUID", FieldType.KEYWORD),
@@ -43,7 +43,7 @@ public class IndexRegistry {
         definitions.put("manual-qna", IndexDefinition.builder()
                 .indexName("manual-qna")
                 .sourceTableName("uvw_manual_qna")
-                .description("매뉴얼 QnA")
+                .description("QnA")
                 .idColumn("MANUAL_UUID")
                 .fields(List.of(
                         field("MANUAL_UUID", FieldType.KEYWORD),
@@ -56,7 +56,7 @@ public class IndexRegistry {
         definitions.put("call", IndexDefinition.builder()
                 .indexName("call")
                 .sourceTableName("uvw_call")
-                .description("상담 콜")
+                .description("상담이력")
                 .idColumn("CALL_UUID")
                 .fields(List.of(
                         field("CALL_UUID", FieldType.KEYWORD),
@@ -75,7 +75,7 @@ public class IndexRegistry {
         definitions.put("doc-notice", IndexDefinition.builder()
                 .indexName("doc-notice")
                 .sourceTableName("uvw_doc_notice")
-                .description("문서 공지사항")
+                .description("공지사항")
                 .idColumn("DOC_UUID")
                 .fields(List.of(
                         field("DOC_UUID", FieldType.KEYWORD),
