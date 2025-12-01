@@ -1,6 +1,10 @@
 package com.cp.oslo.controller;
 
+import com.cp.oslo.config.IndexRegistry;
+import com.cp.oslo.domain.IndexState;
+import com.cp.oslo.repository.IndexStateRepository;
 import com.cp.oslo.service.IndexingService;
+import com.cp.oslo.service.OpenSearchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +23,45 @@ import java.util.Map;
 public class ManualIndexController {
 
     private final IndexingService indexingService;
+    private final IndexRegistry indexRegistry;
+    private final OpenSearchService openSearchService;
+    private final IndexStateRepository indexStateRepository;
+
+    /**
+     * manual 인덱스 정보를 조회합니다.
+     *
+     * GET /api/v1/manual/info
+     */
+    @GetMapping("/info")
+    public ResponseEntity<Map<String, Object>> getManualIndexInfo() {
+        String indexName = "manual";
+        var definition = indexRegistry.get(indexName);
+
+        if (definition == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> info = new HashMap<>();
+        boolean exists = openSearchService.indexExists(indexName);
+        IndexState state = indexStateRepository.findById(indexName).orElse(null);
+
+        info.put("indexName", indexName);
+        info.put("sourceTable", definition.getSourceTableName());
+        info.put("description", definition.getDescription());
+        info.put("exists", exists);
+        info.put("enabled", true);
+        info.put("fieldMappingsCount", definition.getFields().size());
+
+        if (state != null) {
+            info.put("lastSyncTime", state.getLastSyncTime());
+            info.put("lastSyncStatus", state.getLastSyncStatus());
+        }
+
+        info.put("syncUrl", "/api/v1/manual/sync");
+        info.put("searchUrl", "/api/v1/search/manual?query=키워드");
+
+        return ResponseEntity.ok(info);
+    }
 
     /**
      * uvw_manual 인덱스를 생성하고 데이터를 동기화합니다.
