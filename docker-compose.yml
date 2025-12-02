@@ -5,8 +5,9 @@ services:
   opensearch-node:
     build:
       context: ./opensearch
-      platforms:
-        - linux/amd64
+#      platforms:
+#        - linux/amd64
+#        - linux/arm64
     container_name: opensearch-node
     env_file: .env
     environment:
@@ -37,8 +38,9 @@ services:
     build:
       context: ./embedding-service
       dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
+#      platforms:
+#        - linux/amd64
+#        - linux/arm64
     container_name: embedding-service
     env_file: .env
     ports:
@@ -55,8 +57,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
+#      platforms:
+#        - linux/amd64
+#        - linux/arm64
     container_name: search-manager
     env_file: .env
     ports:
