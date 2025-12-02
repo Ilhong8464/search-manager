@@ -1,25 +1,30 @@
 package com.cp.oslo.util;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+
+import java.util.stream.Collectors; // Collectors import
 
 /**
  * 검색 엔진의 동의어(synonyms)와 불용어(stopwords) 설정 파일을 로드하는 유틸리티 클래스
+ * (TB_CONFIG 테이블 기반)
  */
 @Component
+@RequiredArgsConstructor
 @Slf4j
 public class AnalyzerConfigLoader {
     
-    private static final String SYNONYMS_FILE = "search/synonyms.txt";
-    private static final String STOPWORDS_FILE = "search/stopwords.txt";
+    private final JdbcTemplate jdbcTemplate;
+    
+    private static final String SYNONYMS_KEY_PATH = "System.SearchEngine.Synonyms";
+    private static final String STOPWORDS_KEY_PATH = "System.SearchEngine.StopWords";
     
     /**
      * 동의어 목록을 로드합니다.
@@ -27,7 +32,7 @@ public class AnalyzerConfigLoader {
      * @return 동의어 목록 (각 줄이 하나의 동의어 규칙)
      */
     public List<String> loadSynonyms() {
-        return loadFile(SYNONYMS_FILE, "동의어");
+        return loadFromDatabase(SYNONYMS_KEY_PATH, "동의어");
     }
     
     /**
@@ -36,57 +41,106 @@ public class AnalyzerConfigLoader {
      * @return 불용어 목록
      */
     public List<String> loadStopwords() {
-        return loadFile(STOPWORDS_FILE, "불용어");
+        return loadFromDatabase(STOPWORDS_KEY_PATH, "불용어");
+    }
+
+    /**
+     * 하이브리드 검색 대상 필드 목록을 로드합니다. (System.SearchEngine.Fields)
+     */
+    public List<String> loadSearchFields() {
+        String value = loadConfigValue("System.SearchEngine.Fields");
+        if (value == null || value.isEmpty()) return Collections.emptyList();
+        // 쉼표로 분리하고 공백 제거 및 대문자 변환 (인덱스 필드명과 일치시키기 위해)
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .map(String::toUpperCase)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 하이브리드 검색 텍스트 가중치를 로드합니다. (System.SearchEngine.Weight)
+     */
+    public Double loadSearchWeight() {
+        String value = loadConfigValue("System.SearchEngine.Weight");
+        try {
+            return value != null ? Double.parseDouble(value) : 0.5; // 기본값 0.5
+        } catch (NumberFormatException e) {
+            return 0.5;
+        }
+    }
+
+    /**
+     * 하이브리드 검색 결과 개수를 로드합니다. (System.SearchEngine.Size)
+     */
+    public Integer loadSearchSize() {
+        String value = loadConfigValue("System.SearchEngine.Size");
+        try {
+            return value != null ? Integer.parseInt(value) : 10; // 기본값 10
+        } catch (NumberFormatException e) {
+            return 10;
+        }
+    }
+
+    /**
+     * TB_CONFIG 테이블의 CONFIG_VALUE 컬럼 값을 조회합니다.
+     */
+    private String loadConfigValue(String keyPath) {
+        try {
+            // EmptyResultDataAccessException 처리를 위해 list로 조회
+            String sql = "SELECT CONFIG_VALUE FROM TB_CONFIG WHERE KEY_PATH = ?";
+            List<String> results = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("CONFIG_VALUE"), keyPath);
+            return results.isEmpty() ? null : results.get(0);
+        } catch (Exception e) {
+            log.error("설정 값 로드 실패: {}", keyPath, e);
+            return null;
+        }
     }
     
     /**
-     * 파일을 읽어서 목록으로 반환합니다.
+     * 데이터베이스에서 설정값을 읽어서 목록으로 반환합니다.
+     * TB_CONFIG 테이블의 DESCRIPTION 컬럼을 사용합니다.
      * 주석(#으로 시작하는 줄)과 빈 줄은 무시합니다.
      * 
-     * @param filePath 파일 경로 (resources 기준 상대 경로)
-     * @param fileDescription 파일 설명 (로깅용)
-     * @return 파일 내용 목록
+     * @param keyPath TB_CONFIG의 KEY_PATH
+     * @param description 설정 설명 (로깅용)
+     * @return 설정 내용 목록
      */
-    private List<String> loadFile(String filePath, String fileDescription) {
-        List<String> lines = new ArrayList<>();
+    private List<String> loadFromDatabase(String keyPath, String description) {
+        List<String> resultList = new ArrayList<>();
         
         try {
-            ClassPathResource resource = new ClassPathResource(filePath);
+            String sql = "SELECT DESCRIPTION FROM TB_CONFIG WHERE KEY_PATH = ?";
+            List<String> results = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("DESCRIPTION"), keyPath);
             
-            if (!resource.exists()) {
-                log.warn("{} 파일이 존재하지 않습니다: {}", fileDescription, filePath);
-                return lines;
+            if (results.isEmpty() || results.get(0) == null) {
+                log.warn("{} 설정이 TB_CONFIG에 존재하지 않거나 값이 비어있습니다: {}", description, keyPath);
+                return resultList;
             }
             
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8))) {
+            String content = results.get(0);
+            // 줄바꿈 문자로 분리 (\r\n, \n, \r 모두 처리)
+            String[] lines = content.split("\\R");
+            
+            for (String line : lines) {
+                // 공백 제거
+                line = line.trim();
                 
-                String line;
-                int lineNumber = 0;
-                
-                while ((line = reader.readLine()) != null) {
-                    lineNumber++;
-                    
-                    // 공백 제거
-                    line = line.trim();
-                    
-                    // 빈 줄이나 주석은 무시
-                    if (line.isEmpty() || line.startsWith("#")) {
-                        continue;
-                    }
-                    
-                    lines.add(line);
+                // 빈 줄이나 주석은 무시
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
                 }
                 
-                log.info("{} 파일 로드 완료: {} ({}개 항목)", fileDescription, filePath, lines.size());
-                
+                resultList.add(line);
             }
             
-        } catch (IOException e) {
-            log.error("{} 파일 로드 실패: {}", fileDescription, filePath, e);
-            throw new RuntimeException(fileDescription + " 파일 로드 실패: " + filePath, e);
+            log.info("{} 로드 완료 (DB): {} ({}개 항목)", description, keyPath, resultList.size());
+            
+        } catch (Exception e) {
+            log.error("{} 로드 실패 (DB): {}", description, keyPath, e);
+            // DB 조회 실패 시 빈 리스트 반환 (또는 예외 던지기 선택 가능)
+            // 여기서는 안전하게 빈 리스트 반환
         }
         
-        return lines;
+        return resultList;
     }
 }

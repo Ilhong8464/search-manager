@@ -76,9 +76,17 @@ public class IndexingService {
         history = syncHistoryRepository.save(history);
 
         try {
+            // 인덱스가 없으면 생성
             if (!openSearchService.indexExists(definition.getIndexName())) {
                 log.info("인덱스 생성 중...");
                 openSearchService.createIndex(definition);
+            } else if ("unified".equals(definition.getIndexName())) {
+                // unified 인덱스이고 이미 존재하는 경우: 비활성화된 데이터 타입 삭제 (TB_CONFIG 기준)
+                List<String> enabledTypes = fetchEnabledDataTypes();
+                if (!enabledTypes.isEmpty()) {
+                    log.info("비활성화된 데이터 정리 중... (활성화된 타입: {})", enabledTypes);
+                    openSearchService.deleteDocumentsNotInTypes(definition.getIndexName(), "DATA_TYPE", enabledTypes);
+                }
             }
 
             long totalProcessed = 0;
@@ -172,17 +180,38 @@ public class IndexingService {
             // 정렬 기준 컬럼 (ID 컬럼 우선)
             String idColumn = definition.getIdColumn();
             if (idColumn == null || idColumn.isEmpty()) {
-                // ID 컬럼이 없으면 첫 번째 필드를 기준으로 정렬 (불안정할 수 있음)
                 idColumn = fields.get(0).getSourceColumn();
-                log.warn("인덱스 '{}'에 ID 컬럼이 지정되지 않아 '{}' 컬럼으로 정렬합니다.", definition.getIndexName(), idColumn);
             }
 
-            // SQL 생성 (ORDER BY 필수 for Consistent Paging)
-            String sql = String.format("SELECT %s FROM %s ORDER BY %s ASC LIMIT ? OFFSET ?", 
-                    selectColumns, definition.getSourceTableName(), idColumn);
+            StringBuilder sqlBuilder = new StringBuilder();
+            sqlBuilder.append(String.format("SELECT %s FROM %s", selectColumns, definition.getSourceTableName()));
+            
+            List<Object> params = new ArrayList<>();
 
-            // log.debug("실행 SQL (Batch): {} (Limit: {}, Offset: {})", sql, limit, offset);
+            // unified 인덱스인 경우 TB_CONFIG 기반 필터링 적용
+            if ("unified".equals(definition.getIndexName())) {
+                List<String> enabledTypes = fetchEnabledDataTypes();
+                if (enabledTypes.isEmpty()) {
+                    log.info("활성화된 검색 컬렉션(TB_CONFIG)이 없습니다. 동기화를 중단합니다.");
+                    return Collections.emptyList();
+                }
+                
+                String inClause = enabledTypes.stream()
+                        .map(type -> "?")
+                        .collect(Collectors.joining(", "));
+                
+                // Collation 충돌 방지를 위해 CONVERT 사용
+                sqlBuilder.append(String.format(" WHERE CONVERT(DATA_TYPE USING utf8mb4) IN (%s)", inClause));
+                params.addAll(enabledTypes);
+            }
 
+            // ORDER BY 및 LIMIT/OFFSET 추가
+            sqlBuilder.append(String.format(" ORDER BY %s ASC LIMIT ? OFFSET ?", idColumn));
+            params.add(limit);
+            params.add(offset);
+
+            String sql = sqlBuilder.toString();
+            
             List<Map<String, Object>> documents = jdbcTemplate.query(sql, (rs, rowNum) -> {
                 Map<String, Object> document = new HashMap<>();
                 for (FieldDefinition field : fields) {
@@ -192,7 +221,7 @@ public class IndexingService {
                     }
                 }
                 return document;
-            }, limit, offset);
+            }, params.toArray());
 
             // 문서 ID (_id) 설정
             final String targetIdColumn = idColumn; // lambda용 final 변수
@@ -216,6 +245,24 @@ public class IndexingService {
         } catch (Exception e) {
             log.error("데이터베이스 배치 조회 실패: {} (Offset: {})", definition.getSourceTableName(), offset, e);
             throw new RuntimeException("데이터베이스 배치 조회 실패", e);
+        }
+    }
+
+    /**
+     * TB_CONFIG 테이블에서 활성화된(CONFIG_VALUE='Y') 검색 컬렉션 타입 조회
+     */
+    private List<String> fetchEnabledDataTypes() {
+        try {
+            // KEY_PATH가 'System.SearchEngine.Collection.'으로 시작하고 CONFIG_VALUE가 'Y'인 항목 조회
+            // CONFIG_KEY를 대문자로 변환하여 반환 (예: Call -> CALL)
+            String sql = "SELECT UPPER(CONFIG_KEY) FROM TB_CONFIG " +
+                         "WHERE KEY_PATH LIKE 'System.SearchEngine.Collection.%' " +
+                         "AND CONFIG_VALUE = 'Y'";
+            
+            return jdbcTemplate.queryForList(sql, String.class);
+        } catch (Exception e) {
+            log.error("TB_CONFIG 조회 실패", e);
+            return Collections.emptyList();
         }
     }
 
