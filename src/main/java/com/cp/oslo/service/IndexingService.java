@@ -61,52 +61,42 @@ public class IndexingService {
     }
 
     /**
-     * 실제 동기화 로직
+     * 실제 동기화 로직 (Batch Processing 적용)
      */
     private SyncHistory executeSync(IndexDefinition definition) {
         log.info("========================================");
         log.info("동기화 시작: {} (테이블: {})", definition.getIndexName(), definition.getSourceTableName());
         log.info("========================================");
 
-        // 동기화 이력 생성
         SyncHistory history = SyncHistory.builder()
                 .indexName(definition.getIndexName())
                 .startTime(LocalDateTime.now())
                 .status(SyncHistory.SyncStatus.RUNNING)
                 .build();
-        // 주의: 기존 SyncHistory에는 indexConfigId가 FK로 있었으나, 이제는 제거되어야 함.
-        // 임시로 indexConfigId는 null 또는 가짜 값을 넣거나, 엔티티 수정 필요.
-        // 여기서는 일단 엔티티 필드가 남아있다면 에러가 날 수 있으므로, 
-        // SyncHistory 엔티티도 수정했다고 가정하거나, null을 허용해야 함.
-        // (리팩토링 범위에 포함됨)
         history = syncHistoryRepository.save(history);
 
         try {
-            // 인덱스가 없으면 생성
             if (!openSearchService.indexExists(definition.getIndexName())) {
                 log.info("인덱스 생성 중...");
                 openSearchService.createIndex(definition);
             }
 
-            // 데이터베이스에서 데이터 조회
-            log.info("데이터 조회 중...");
-            List<Map<String, Object>> allDocuments = fetchDataFromDatabase(definition);
-            long totalRecords = allDocuments.size();
-
-            log.info("총 {}건 조회 완료 - 배치 처리 시작", totalRecords);
-
-            // Batch로 나누어 임베딩 생성 및 인덱싱
+            long totalProcessed = 0;
             long successCount = 0;
             long failCount = 0;
-            int totalBatches = (int) Math.ceil((double) allDocuments.size() / BATCH_SIZE);
-            int currentBatch = 0;
+            int offset = 0;
+            
+            log.info("데이터 조회 및 인덱싱 시작 (Batch Size: {})", BATCH_SIZE);
 
-            for (int i = 0; i < allDocuments.size(); i += BATCH_SIZE) {
-                currentBatch++;
-                int endIndex = Math.min(i + BATCH_SIZE, allDocuments.size());
-                List<Map<String, Object>> batch = allDocuments.subList(i, endIndex);
+            while (true) {
+                // 배치 데이터 조회
+                List<Map<String, Object>> batch = fetchBatchFromDatabase(definition, BATCH_SIZE, offset);
+                
+                if (batch.isEmpty()) {
+                    break;
+                }
 
-                // 1. 임베딩 생성 (배치 단위)
+                // 1. 임베딩 생성
                 enrichDocumentsWithEmbedding(definition.getIndexName(), batch);
 
                 // 2. OpenSearch 인덱싱
@@ -117,16 +107,15 @@ public class IndexingService {
 
                 successCount += result.successCount();
                 failCount += result.failCount();
+                totalProcessed += batch.size();
+                offset += BATCH_SIZE; // 다음 배치를 위해 오프셋 증가
 
-                // 진행률 로그
-                double progress = (double) endIndex / totalRecords * 100;
-                // 임베딩 시간이 오래 걸리므로 모든 배치마다 로그 출력
-                log.info("진행률: {}/{} ({}) | 성공: {} | 실패: {}",
-                        endIndex, totalRecords, String.format("%.1f%%", progress), successCount, failCount);
+                log.info("진행 중... 처리: {}건 | 성공: {} | 실패: {} (현재 오프셋: {})", 
+                        totalProcessed, successCount, failCount, offset);
             }
 
             // 동기화 완료 처리
-            history.setRecordsProcessed(totalRecords);
+            history.setRecordsProcessed(totalProcessed);
             history.setRecordsSucceeded(successCount);
             history.setRecordsFailed(failCount);
 
@@ -135,14 +124,12 @@ public class IndexingService {
                     : (successCount > 0 ? SyncHistory.SyncStatus.PARTIAL : SyncHistory.SyncStatus.FAILED);
 
             history.complete(status, null);
-
-            // 마지막 동기화 시간 업데이트 (DB 상태 테이블)
             updateLastSyncState(definition.getIndexName(), status);
 
             log.info("========================================");
             log.info("동기화 완료: {}", definition.getIndexName());
             log.info("총 처리: {}건 | 성공: {}건 | 실패: {}건 | 상태: {}", 
-                    totalRecords, successCount, failCount, status);
+                    totalProcessed, successCount, failCount, status);
             log.info("========================================");
 
         } catch (Exception e) {
@@ -169,9 +156,9 @@ public class IndexingService {
     }
 
     /**
-     * 데이터베이스에서 데이터 조회
+     * 데이터베이스에서 배치 단위로 데이터 조회 (Paging)
      */
-    private List<Map<String, Object>> fetchDataFromDatabase(IndexDefinition definition) {
+    private List<Map<String, Object>> fetchBatchFromDatabase(IndexDefinition definition, int limit, int offset) {
         try {
             List<FieldDefinition> fields = definition.getFields();
             if (fields.isEmpty()) {
@@ -181,10 +168,20 @@ public class IndexingService {
             String selectColumns = fields.stream()
                     .map(FieldDefinition::getSourceColumn)
                     .collect(Collectors.joining(", "));
+            
+            // 정렬 기준 컬럼 (ID 컬럼 우선)
+            String idColumn = definition.getIdColumn();
+            if (idColumn == null || idColumn.isEmpty()) {
+                // ID 컬럼이 없으면 첫 번째 필드를 기준으로 정렬 (불안정할 수 있음)
+                idColumn = fields.get(0).getSourceColumn();
+                log.warn("인덱스 '{}'에 ID 컬럼이 지정되지 않아 '{}' 컬럼으로 정렬합니다.", definition.getIndexName(), idColumn);
+            }
 
-            String sql = String.format("SELECT %s FROM %s", selectColumns, definition.getSourceTableName());
+            // SQL 생성 (ORDER BY 필수 for Consistent Paging)
+            String sql = String.format("SELECT %s FROM %s ORDER BY %s ASC LIMIT ? OFFSET ?", 
+                    selectColumns, definition.getSourceTableName(), idColumn);
 
-            log.debug("실행 SQL: {}", sql);
+            // log.debug("실행 SQL (Batch): {} (Limit: {}, Offset: {})", sql, limit, offset);
 
             List<Map<String, Object>> documents = jdbcTemplate.query(sql, (rs, rowNum) -> {
                 Map<String, Object> document = new HashMap<>();
@@ -195,12 +192,12 @@ public class IndexingService {
                     }
                 }
                 return document;
-            });
+            }, limit, offset);
 
             // 문서 ID (_id) 설정
-            String idColumn = definition.getIdColumn();
+            final String targetIdColumn = idColumn; // lambda용 final 변수
             FieldDefinition idField = fields.stream()
-                    .filter(f -> f.getSourceColumn().equalsIgnoreCase(idColumn))
+                    .filter(f -> f.getSourceColumn().equalsIgnoreCase(targetIdColumn))
                     .findFirst()
                     .orElse(null);
             
@@ -212,15 +209,13 @@ public class IndexingService {
                         doc.put("id", idVal.toString());
                     }
                 }
-            } else {
-                log.warn("인덱스 '{}'의 ID 컬럼 '{}'에 대한 필드 정의를 찾을 수 없습니다.", definition.getIndexName(), idColumn);
             }
 
             return documents;
 
         } catch (Exception e) {
-            log.error("데이터베이스 조회 실패: {}", definition.getSourceTableName(), e);
-            throw new RuntimeException("데이터베이스 조회 실패", e);
+            log.error("데이터베이스 배치 조회 실패: {} (Offset: {})", definition.getSourceTableName(), offset, e);
+            throw new RuntimeException("데이터베이스 배치 조회 실패", e);
         }
     }
 
@@ -233,7 +228,7 @@ public class IndexingService {
              throw new IllegalArgumentException("알 수 없는 인덱스입니다: " + indexName);
         }
 
-        log.info("단건 동기화 시작: index={}, uuid={}", indexName, uuid);
+//        log.info("단건 동기화 시작: index={}, uuid={}", indexName, uuid);
 
         try {
             Map<String, Object> document = fetchDocumentByUuid(definition, uuid);

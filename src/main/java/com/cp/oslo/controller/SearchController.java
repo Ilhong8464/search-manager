@@ -12,6 +12,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.Arrays;
+import com.cp.oslo.dto.SearchResultDto; // SearchResultDto import 추가
+import java.util.HashMap; // HashMap import 추가
 
 /**
  * 검색 API 컨트롤러
@@ -45,24 +48,56 @@ public class SearchController {
             size = Math.max(1, Math.min(size, 100));
         }
 
-        SearchResponse<Map> response = openSearchService.search(indexName, query, operator, size);
+        SearchResultDto searchResult = openSearchService.search(indexName, query, operator, size); // 반환 타입 변경
         
-        List<Map<String, Object>> results = response.hits().hits().stream()
-                .map(hit -> {
-                    Map<String, Object> source = (Map<String, Object>) hit.source();
+        Map<String, Map<String, List<String>>> highlightsMap = searchResult.getHighlights();
+
+        List<Map<String, Object>> results = searchResult.getDocuments().stream() // documents 사용
+                .map(source -> {
                     Map<String, Object> result = convertKeysToCamelCase(source);
-                    result.remove("embedding");
+                    result.remove("embedding"); // 임베딩 필드 제거
+                    result.remove("_id"); // _id 필드 제거
+                    result.remove("_score"); // _score 필드 제거 (중복 방지)
+                    
+                    // _score 필드 복구 (score로 변경)
+                    if (source.containsKey("_score")) {
+                        result.put("score", source.get("_score"));
+                    }
+                    
+                    // 문서 ID 추출 (OpenSearchService에서 _id 필드 추가됨)
+                    String docId = null;
+                    if (source.get("_id") != null) docId = source.get("_id").toString();
+                    else if (source.get("id") != null) docId = source.get("id").toString();
+                    else if (source.get("UUID") != null) docId = source.get("UUID").toString();
+                    else if (source.get("uuid") != null) docId = source.get("uuid").toString();
+                    else if (source.get("MANUAL_UUID") != null) docId = source.get("MANUAL_UUID").toString(); // manual 인덱스용
+
+                    // 하이라이트 정보 병합 (원본 필드 덮어쓰기)
+                    if (docId != null && highlightsMap != null && highlightsMap.containsKey(docId)) {
+                        Map<String, List<String>> docHighlights = highlightsMap.get(docId);
+                        for (Map.Entry<String, List<String>> entry : docHighlights.entrySet()) {
+                            String fieldName = entry.getKey();
+                            List<String> fragments = entry.getValue();
+                            if (fragments != null && !fragments.isEmpty()) {
+                                // 필드명을 camelCase로 변환하여 원본 데이터의 키와 일치시킴 (예: TITLE -> title)
+                                String camelCaseField = CaseUtils.toCamelCase(fieldName);
+                                // 원본 필드 값을 하이라이트된 텍스트로 교체
+                                result.put(camelCaseField, fragments.get(0));
+                            }
+                        }
+                    }
+
                     return result;
                 })
                 .collect(Collectors.toList());
 
-        Map<String, Object> responseData = Map.of(
-                "total", response.hits().total().value(),
-                "size", results.size(),
-                "query", query,
-                "operator", operator,
-                "results", results
-        );
+        Map<String, Object> responseData = new HashMap<>(); // Map.of는 불변 Map을 생성하므로 변경 가능한 Map 사용
+        responseData.put("total", searchResult.getTotalHits());
+        responseData.put("size", results.size());
+        responseData.put("query", query);
+        responseData.put("operator", operator);
+        responseData.put("results", results);
+        // responseData.put("highlights", searchResult.getHighlights()); // 별도 필드 제거
 
         return ResponseEntity.ok(responseData);
     }
@@ -95,7 +130,9 @@ public class SearchController {
                     Map<String, Object> source = (Map<String, Object>) hit.source();
                     Map<String, Object> result = convertKeysToCamelCase(source);
                     result.remove("embedding");
-                    result.put("_score", hit.score());
+                    result.remove("_id"); // _id 필드 제거
+                    result.remove("_score"); // _score 필드 제거
+                    result.put("score", hit.score()); // _score를 score로 변경
                     return result;
                 })
                 .collect(Collectors.toList());
@@ -134,29 +171,34 @@ public class SearchController {
         List<String> fieldList = List.of(textFields.split(","));
         List<Double> queryVector = embeddingClient.embed(query);
 
-        SearchResponse<Map> response = openSearchService.hybridSearch(
+        SearchResultDto searchResult = openSearchService.hybridSearch(
                 indexName, fieldList, vectorFieldName, query, queryVector, textWeight, size);
         
-        List<Map<String, Object>> results = response.hits().hits().stream()
-                .map(hit -> {
-                    Map<String, Object> source = (Map<String, Object>) hit.source();
+        List<Map<String, Object>> results = searchResult.getDocuments().stream()
+                .map(source -> {
                     Map<String, Object> result = convertKeysToCamelCase(source);
                     result.remove("embedding");
-                    result.put("_score", hit.score());
+                    result.remove("_id"); // _id 필드 제거
+                    result.remove("_score"); // _score 필드 제거
+                    
+                    // _score 필드 복구 (score로 변경)
+                    if (source.containsKey("_score")) {
+                        result.put("score", source.get("_score"));
+                    }
+
                     return result;
                 })
                 .collect(Collectors.toList());
 
-        Map<String, Object> responseData = Map.of(
-                "total", response.hits().total().value(),
-                "size", results.size(),
-                "query", query,
-                "textFields", fieldList,
-                "vectorField", vectorFieldName,
-                "textWeight", textWeight,
-                "vectorWeight", 1.0 - textWeight,
-                "results", results
-        );
+        Map<String, Object> responseData = new HashMap<>();
+        responseData.put("total", searchResult.getTotalHits());
+        responseData.put("size", results.size());
+        responseData.put("query", query);
+        responseData.put("textFields", fieldList);
+        responseData.put("vectorField", vectorFieldName);
+        responseData.put("textWeight", textWeight);
+        responseData.put("vectorWeight", 1.0 - (textWeight != null ? textWeight : 0.5));
+        responseData.put("results", results);
 
         return ResponseEntity.ok(responseData);
     }

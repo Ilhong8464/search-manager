@@ -18,9 +18,14 @@ import org.opensearch.client.opensearch.indices.ExistsRequest;
 import org.opensearch.client.opensearch.indices.IndexSettings;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.Map; // Map import 추가
+import java.util.HashMap; // HashMap import 추가
+import java.util.stream.Collectors; // Collectors import 추가
+import java.util.List; // List import 추가
+import com.cp.oslo.dto.SearchResultDto; // SearchResultDto import
+import org.opensearch.client.opensearch.core.SearchRequest; // SearchRequest import
+import org.opensearch.client.opensearch._types.query_dsl.Operator; // Operator import
+
 
 /**
  * OpenSearch 인덱스 및 문서 관리 서비스
@@ -191,7 +196,7 @@ public class OpenSearchService {
     }
     
     // 검색 메서드들은 변경 없음 (String indexName 사용)
-    public SearchResponse<Map> search(String indexName, String query, String operator, Integer size) {
+    public SearchResultDto search(String indexName, String query, String operator, Integer size) {
         // ... (기존 코드 유지)
         try {
             // operator 기본값 및 검증
@@ -206,36 +211,105 @@ public class OpenSearchService {
             // Determine target fields based on indexName
             List<String> targetFields;
             if ("call".equals(indexName)) {
-                targetFields = List.of("QUESTION", "ANSWER"); // 대문자로 변경 (IndexRegistry와 일치)
-            } else if ("manual-qna".equals(indexName) || "manual".equals(indexName)) {
+                targetFields = List.of("QUESTION", "ANSWER");
+            } else if ("manual-qna".equals(indexName)) {
                 targetFields = List.of("TITLE", "CONTENTS");
+            } else if ("manual".equals(indexName)) { // manual 인덱스에 CAT_NM 필드 추가
+                targetFields = List.of("TITLE", "CONTENTS", "CAT_NM");
             } else if ("doc-notice".equals(indexName)) {
                 targetFields = List.of("DOC_NM", "CONTENTS");
+            } else if ("unified".equals(indexName)) {
+                targetFields = List.of("TITLE", "CONTENTS");
             } else { 
                 targetFields = List.of("TITLE", "CONTENTS");
             }    
 
-            final int finalSize = resultSize;
-            final String finalOperator = defaultOperator;
-
-            SearchResponse<Map> response = openSearchClient.search(s -> s
-                            .index(indexName)
-                            .size(finalSize)
-                            .query(q -> q
-                                    .multiMatch(m -> m
-                                            .fields(targetFields)
-                                            .query(query)
-                                            .operator("AND".equalsIgnoreCase(finalOperator)
-                                                    ? org.opensearch.client.opensearch._types.query_dsl.Operator.And
-                                                    : org.opensearch.client.opensearch._types.query_dsl.Operator.Or
-                                            )
-                                            .type(org.opensearch.client.opensearch._types.query_dsl.TextQueryType.CrossFields)
+            SearchRequest.Builder searchRequestBuilder = new SearchRequest.Builder()
+                    .index(indexName)
+                    .size(resultSize)
+                    .query(q -> q
+                            .multiMatch(m -> m
+                                    .fields(targetFields)
+                                    .query(query)
+                                    .operator("AND".equalsIgnoreCase(defaultOperator)
+                                            ? Operator.And
+                                            : Operator.Or
                                     )
-                            ),
-                    Map.class
-            );
+                                    .type(org.opensearch.client.opensearch._types.query_dsl.TextQueryType.CrossFields)
+                            )
+                    );
+
+            // manual 인덱스에만 하이라이팅 적용
+            if ("manual".equals(indexName)) {
+                searchRequestBuilder.highlight(h -> h
+                        .fields("TITLE", f -> f
+                                .preTags("<b>")
+                                .postTags("</b>")
+                                .fragmentSize(100)
+                                .numberOfFragments(1)
+                        )
+                        .fields("CONTENTS", f -> f
+                                .preTags("<b>")
+                                .postTags("</b>")
+                                .fragmentSize(100)
+                                .numberOfFragments(1)
+                        )
+                        .fields("CAT_NM", f -> f // CAT_NM 필드도 하이라이팅에 포함
+                                .preTags("<b>")
+                                .postTags("</b>")
+                                .fragmentSize(100)
+                                .numberOfFragments(1)
+                        )
+                );
+            }
+            
+            // search 인덱스 하이라이팅 적용
+            if ("unified".equals(indexName)) {
+                searchRequestBuilder.highlight(h -> h
+                        .fields("TITLE", f -> f
+                                .preTags("<b>")
+                                .postTags("</b>")
+                                .fragmentSize(100)
+                                .numberOfFragments(1)
+                        )
+                        .fields("CONTENTS", f -> f
+                                .preTags("<b>")
+                                .postTags("</b>")
+                                .fragmentSize(100)
+                                .numberOfFragments(1)
+                        )
+                );
+            }
+
+            SearchResponse<Map> response = openSearchClient.search(searchRequestBuilder.build(), Map.class);
             log.info("OpenSearch response: {} hits", response.hits().total().value());
-            return response;
+
+            List<Map<String, Object>> documents = response.hits().hits().stream()
+                    .map(hit -> {
+                        Map<String, Object> source = new HashMap<>(hit.source());
+                        if (source != null) {
+                            source.put("_id", hit.id());
+                            source.put("_score", hit.score());
+                        }
+                        // 하이라이트 정보를 문서 자체에 병합하지 않고 별도로 관리 (SearchResultDto에)
+                        return source;
+                    })
+                    .collect(Collectors.toList());
+            
+            // 하이라이트 결과 파싱
+            Map<String, Map<String, List<String>>> highlights = new HashMap<>();
+            response.hits().hits().forEach(hit -> {
+                if (hit.highlight() != null && !hit.highlight().isEmpty()) {
+                    highlights.put(hit.id(), hit.highlight());
+                }
+            });
+
+            return SearchResultDto.builder()
+                    .totalHits(response.hits().total().value())
+                    .documents(documents)
+                    .highlights(highlights)
+                    .build();
+
         } catch (Exception e) {
             log.error("검색 실패", e);
             throw new RuntimeException("검색 실패", e);
@@ -272,7 +346,7 @@ public class OpenSearchService {
         }
     }
 
-    public SearchResponse<Map> hybridSearch(String indexName, List<String> textFields, String vectorFieldName, 
+    public SearchResultDto hybridSearch(String indexName, List<String> textFields, String vectorFieldName, 
                                            String queryText, List<Double> queryVector, 
                                            Double textWeight, Integer size) {
         // ... (기존 코드 유지)
@@ -290,31 +364,49 @@ public class OpenSearchService {
             for (int i = 0; i < queryVector.size(); i++) {
                 vectorArray[i] = queryVector.get(i).floatValue();
             }
-            SearchResponse<Map> response = openSearchClient.search(s -> s
-                            .index(indexName)
-                            .size(finalSize)
-                            .query(q -> q
-                                    .bool(b -> b
-                                            .should(sh -> sh
-                                                    .multiMatch(mm -> mm
-                                                            .fields(textFields)
-                                                            .query(queryText)
-                                                            .boost((float) finalTextScore)
-                                                    )
-                                            )
-                                            .should(sh -> sh
-                                                    .knn(knn -> knn
-                                                            .field(vectorFieldName)
-                                                            .vector(vectorArray)
-                                                            .k(finalSize)
-                                                            .boost((float) finalVectorScore)
-                                                    )
+
+            SearchRequest.Builder searchRequestBuilder = new SearchRequest.Builder()
+                    .index(indexName)
+                    .size(finalSize)
+                    .query(q -> q
+                            .bool(b -> b
+                                    .should(sh -> sh
+                                            .multiMatch(mm -> mm
+                                                    .fields(textFields)
+                                                    .query(queryText)
+                                                    .boost((float) finalTextScore)
                                             )
                                     )
-                            ),
-                    Map.class
-            );
-            return response;
+                                    .should(sh -> sh
+                                            .knn(knn -> knn
+                                                    .field(vectorFieldName)
+                                                    .vector(vectorArray)
+                                                    .k(finalSize)
+                                                    .boost((float) finalVectorScore)
+                                            )
+                                    )
+                            )
+                    );
+
+            SearchResponse<Map> response = openSearchClient.search(searchRequestBuilder.build(), Map.class);
+
+            List<Map<String, Object>> documents = response.hits().hits().stream()
+                    .map(hit -> {
+                        Map<String, Object> source = new HashMap<>(hit.source());
+                        if (source != null) {
+                            source.put("_id", hit.id());
+                            source.put("_score", hit.score());
+                        }
+                        return source;
+                    })
+                    .collect(Collectors.toList());
+            
+            return SearchResultDto.builder()
+                    .totalHits(response.hits().total().value())
+                    .documents(documents)
+                    .highlights(null)
+                    .build();
+
         } catch (Exception e) {
             throw new RuntimeException("하이브리드 검색 실패", e);
         }
