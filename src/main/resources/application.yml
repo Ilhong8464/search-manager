@@ -32,19 +32,19 @@ search:
     cron: '${SEARCH_SYNC_CRON:0 0 1 * * *}'  # 매일 새벽 1시 전체 동기화
   indexes:
     manual:
-      enabled: true
+      enabled: false
       auto-sync: false
       sync-interval-minutes: 60 #설정 시간(분)마다 실행
     manual-qna:
-      enabled: true
+      enabled: false
       auto-sync: false
       sync-interval-minutes: 60 #설정 시간(분)마다 실행
     call:
-      enabled: true
+      enabled: false
       auto-sync: false
       sync-interval-minutes: 10 #call인덱스는 마지막 동기화시간(DB의 sync_history테이블)으로부터 설정한 시간(분) 후 다시 시작
     doc-notice:
-      enabled: true
+      enabled: false
       auto-sync: false
       sync-interval-minutes: 30 #설정 시간(분)마다 실행
     unified:

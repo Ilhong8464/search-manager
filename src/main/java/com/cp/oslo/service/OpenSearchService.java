@@ -25,6 +25,8 @@ import java.util.List; // List import 추가
 import com.cp.oslo.dto.SearchResultDto; // SearchResultDto import
 import org.opensearch.client.opensearch.core.SearchRequest; // SearchRequest import
 import org.opensearch.client.opensearch._types.query_dsl.Operator; // Operator import
+import org.opensearch.client.opensearch.core.DeleteByQueryRequest; // DeleteByQueryRequest import
+import org.opensearch.client.opensearch._types.FieldValue; // FieldValue import
 
 
 /**
@@ -38,6 +40,50 @@ public class OpenSearchService {
     private final OpenSearchClient openSearchClient;
     private final AnalyzerConfigLoader analyzerConfigLoader;
     private final VectorFieldConfig vectorFieldConfig;
+
+    /**
+     * 특정 필드 값이 허용된 목록에 포함되지 않는 문서들을 삭제합니다.
+     * (예: DATA_TYPE이 [MANUAL, DOC]에 속하지 않는 문서 삭제)
+     */
+    public void deleteDocumentsNotInTypes(String indexName, String fieldName, List<String> allowedTypes) {
+        try {
+            if (!indexExists(indexName)) {
+                return;
+            }
+
+            if (allowedTypes == null || allowedTypes.isEmpty()) {
+                log.warn("허용된 타입 목록이 비어 있습니다. 삭제 작업을 건너뜁니다.");
+                return;
+            }
+
+            // 쿼리: Must Not Terms (fieldName IN allowedTypes)
+            // 즉, allowedTypes에 포함되지 않는 문서들을 찾아서 삭제
+            DeleteByQueryRequest request = new DeleteByQueryRequest.Builder()
+                    .index(indexName)
+                    .query(q -> q
+                            .bool(b -> b
+                                    .mustNot(mn -> mn
+                                            .terms(t -> t
+                                                    .field(fieldName)
+                                                    .terms(tt -> tt
+                                                            .value(allowedTypes.stream()
+                                                                    .map(FieldValue::of)
+                                                                    .collect(Collectors.toList()))
+                                                    )
+                                            )
+                                    )
+                            )
+                    )
+                    .build();
+
+            openSearchClient.deleteByQuery(request);
+            log.info("인덱스 '{}'에서 허용되지 않은 타입의 문서를 삭제했습니다. (허용된 타입: {})", indexName, allowedTypes);
+
+        } catch (Exception e) {
+            log.error("문서 삭제(deleteByQuery) 실패", e);
+            throw new RuntimeException("문서 삭제 실패", e);
+        }
+    }
 
     /**
      * 인덱스 생성

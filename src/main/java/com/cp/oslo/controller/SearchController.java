@@ -1,6 +1,7 @@
 package com.cp.oslo.controller;
 
 import com.cp.oslo.client.EmbeddingClient;
+import com.cp.oslo.util.AnalyzerConfigLoader; // AnalyzerConfigLoader import 추가
 import com.cp.oslo.service.OpenSearchService;
 import com.cp.oslo.util.CaseUtils;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +16,7 @@ import java.util.stream.Collectors;
 import java.util.Arrays;
 import com.cp.oslo.dto.SearchResultDto; // SearchResultDto import 추가
 import java.util.HashMap; // HashMap import 추가
+import java.util.Collections; // Collections import 추가
 
 /**
  * 검색 API 컨트롤러
@@ -27,6 +29,7 @@ public class SearchController {
 
     private final OpenSearchService openSearchService;
     private final EmbeddingClient embeddingClient;
+    private final AnalyzerConfigLoader analyzerConfigLoader; // AnalyzerConfigLoader 주입
 
     /**
      * 검색 실행
@@ -151,14 +154,34 @@ public class SearchController {
     @GetMapping("/hybrid/{indexName}")
     public ResponseEntity<Map<String, Object>> hybridSearch(
             @PathVariable String indexName,
-            @RequestParam String textFields,
+            @RequestParam(required = false) String textFields,
             @RequestParam(required = false, defaultValue = "embedding") String vectorFieldName,
             @RequestParam String query,
-            @RequestParam(required = false, defaultValue = "0.5") Double textWeight,
-            @RequestParam(required = false, defaultValue = "10") Integer size) {
+            @RequestParam(required = false) Double textWeight,
+            @RequestParam(required = false) Integer size) {
         
-        log.info("하이브리드 검색 요청: index={}, textFields={}, vectorField={}, query={}, textWeight={}, size={}", 
-                indexName, textFields, vectorFieldName, query, textWeight, size);
+        // 파라미터가 없을 경우 DB(TB_CONFIG)에서 설정값 로드
+        List<String> fieldList;
+        if (textFields != null && !textFields.isBlank()) {
+            fieldList = List.of(textFields.split(","));
+        } else {
+            fieldList = analyzerConfigLoader.loadSearchFields();
+            if (fieldList.isEmpty()) {
+                // DB에도 설정이 없으면 기본값 사용
+                fieldList = List.of("TITLE", "CONTENTS"); 
+            }
+        }
+        
+        if (textWeight == null) {
+            textWeight = analyzerConfigLoader.loadSearchWeight();
+        }
+
+        if (size == null) {
+            size = analyzerConfigLoader.loadSearchSize();
+        }
+
+        log.info("하이브리드 검색 요청: index={}, fields={}, vectorField={}, query={}, textWeight={}, size={}", 
+                indexName, fieldList, vectorFieldName, query, textWeight, size);
 
         if (textWeight != null && (textWeight < 0.0 || textWeight > 1.0)) {
             textWeight = Math.max(0.0, Math.min(textWeight, 1.0));
@@ -168,7 +191,6 @@ public class SearchController {
             size = Math.max(1, Math.min(size, 100));
         }
 
-        List<String> fieldList = List.of(textFields.split(","));
         List<Double> queryVector = embeddingClient.embed(query);
 
         SearchResultDto searchResult = openSearchService.hybridSearch(
