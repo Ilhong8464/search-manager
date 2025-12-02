@@ -84,6 +84,21 @@ public class IndexRegistry {
                         field("REG_DT", FieldType.DATE)
                 ))
                 .build());
+
+        // 5. Integrated Search 인덱스 정의 (UVW_SEARCH)
+        definitions.put("unified", IndexDefinition.builder()
+                .indexName("unified")
+                .sourceTableName("UVW_SEARCH")
+                .description("통합 검색")
+                .idColumn("UUID")
+                .fields(List.of(
+                        field("DATA_TYPE", FieldType.KEYWORD),
+                        field("UUID", FieldType.KEYWORD),
+                        field("TITLE", FieldType.TEXT, "nori"),
+                        field("CONTENTS", FieldType.TEXT, "nori"),
+                        field("EXTENTION", FieldType.KEYWORD)
+                ))
+                .build());
     }
 
     public IndexDefinition get(String indexName) {
