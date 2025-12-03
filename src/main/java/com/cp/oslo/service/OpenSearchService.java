@@ -612,6 +612,24 @@ public class OpenSearchService {
     }
 
     /**
+     * 단건 문서 삭제
+     */
+    public boolean deleteDocument(String indexName, String docId) {
+        try {
+            org.opensearch.client.opensearch.core.DeleteRequest request = 
+                org.opensearch.client.opensearch.core.DeleteRequest.of(d -> d
+                    .index(indexName)
+                    .id(docId)
+            );
+            org.opensearch.client.opensearch.core.DeleteResponse response = openSearchClient.delete(request);
+            return response.result() == org.opensearch.client.opensearch._types.Result.Deleted;
+        } catch (Exception e) {
+            log.error("문서 삭제 실패: index={}, id={}", indexName, docId, e);
+            throw new RuntimeException("문서 삭제 실패", e);
+        }
+    }
+
+    /**
      * 인덱스 설정 생성 (custom analyzer 포함)
      */
     private IndexSettings createIndexSettings(Integer numberOfShards, Integer numberOfReplicas, IndexDefinition definition) {
