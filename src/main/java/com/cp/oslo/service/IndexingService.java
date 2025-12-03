@@ -38,6 +38,7 @@ public class IndexingService {
     private final JdbcTemplate jdbcTemplate;
     private final EmbeddingClient embeddingClient;
     private final VectorFieldConfig vectorFieldConfig;
+    private final FileIndexingService fileIndexingService;
 
     private static final int BATCH_SIZE = 1000;
 
@@ -45,19 +46,57 @@ public class IndexingService {
      * 전체 동기화 실행 (인덱스 이름으로)
      */
     public SyncHistory syncIndex(String indexName) {
-        // 1. 인덱스 정의 조회 (코드 기반)
-        IndexDefinition definition = indexRegistry.get(indexName);
-        if (definition == null) {
-            throw new IllegalArgumentException("알 수 없는 인덱스입니다: " + indexName);
-        }
-
-        // 2. 활성화 여부 확인 (YML 설정 기반)
+        // 1. 활성화 여부 확인 (YML 설정 기반)
         if (!isIndexEnabled(indexName)) {
             log.warn("인덱스가 비활성화되어 있어 동기화를 건너뜁니다: {}", indexName);
             return null;
         }
+
+        // 2. File 인덱스 특수 처리
+        if ("file".equalsIgnoreCase(indexName)) {
+            return syncFileIndex();
+        }
+
+        // 3. 인덱스 정의 조회 (코드 기반)
+        IndexDefinition definition = indexRegistry.get(indexName);
+        if (definition == null) {
+            throw new IllegalArgumentException("알 수 없는 인덱스입니다: " + indexName);
+        }
         
         return executeSync(definition);
+    }
+
+    private SyncHistory syncFileIndex() {
+        log.info("========================================");
+        log.info("동기화 시작: file");
+        log.info("========================================");
+
+        SyncHistory history = SyncHistory.builder()
+                .indexName("file")
+                .startTime(LocalDateTime.now())
+                .status(SyncHistory.SyncStatus.RUNNING)
+                .build();
+        history = syncHistoryRepository.save(history);
+
+        try {
+            fileIndexingService.indexAllFiles();
+
+            history.complete(SyncHistory.SyncStatus.SUCCESS, null);
+            updateLastSyncState("file", SyncHistory.SyncStatus.SUCCESS);
+
+            log.info("========================================");
+            log.info("동기화 완료: file");
+            log.info("========================================");
+
+        } catch (Exception e) {
+            log.error("========================================");
+            log.error("동기화 실패: file", e);
+            log.error("========================================");
+            history.complete(SyncHistory.SyncStatus.FAILED, e.getMessage());
+            updateLastSyncState("file", SyncHistory.SyncStatus.FAILED);
+        }
+
+        return syncHistoryRepository.save(history);
     }
 
     /**
@@ -270,6 +309,12 @@ public class IndexingService {
      * 단건 문서 동기화 (실시간 인덱싱)
      */
     public void syncDocument(String indexName, String uuid) {
+        // File 인덱스 특수 처리
+        if ("file".equalsIgnoreCase(indexName)) {
+            fileIndexingService.indexFileByUuid(uuid);
+            return;
+        }
+
         IndexDefinition definition = indexRegistry.get(indexName);
         if (definition == null) {
              throw new IllegalArgumentException("알 수 없는 인덱스입니다: " + indexName);

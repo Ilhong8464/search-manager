@@ -106,7 +106,7 @@ public class OpenSearchService {
             IndexSettings indexSettings = createIndexSettings(
                     1, // 기본값 하드코딩 또는 definition에 추가 가능
                     1, // 기본값 하드코딩
-                    definition.getIndexName()
+                    definition
             );
 
             // 인덱스 생성 요청
@@ -158,6 +158,24 @@ public class OpenSearchService {
             log.error("인덱스 존재 여부 확인 실패: {}", indexName, e);
             return false;
         }
+    }
+
+    /**
+     * 필드 목록에 KNN_VECTOR 타입이 포함되어 있는지 재귀적으로 확인
+     */
+    private boolean hasKnnVector(List<FieldDefinition> fields) {
+        if (fields == null) return false;
+        for (FieldDefinition field : fields) {
+            if (field.getType() == FieldDefinition.FieldType.KNN_VECTOR) {
+                return true;
+            }
+            if (field.getType() == FieldDefinition.FieldType.NESTED) {
+                if (hasKnnVector(field.getSubFields())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -252,6 +270,11 @@ public class OpenSearchService {
             int resultSize = 10;
             if (size != null) {
                 resultSize = Math.max(1, Math.min(size, 100));
+            }
+            
+            // file 인덱스 특수 처리 (Nested 구조 전문 검색)
+            if ("file".equalsIgnoreCase(indexName)) {
+                return searchNestedText(indexName, "paragraphs", "content", query, resultSize);
             }
             
             // Determine target fields based on indexName
@@ -395,7 +418,12 @@ public class OpenSearchService {
     public SearchResultDto hybridSearch(String indexName, List<String> textFields, String vectorFieldName, 
                                            String queryText, List<Double> queryVector, 
                                            Double textWeight, Integer size) {
-        // ... (기존 코드 유지)
+        
+        // file 인덱스 특수 처리 (Nested 구조)
+        if ("file".equalsIgnoreCase(indexName)) {
+            return searchNestedHybrid(indexName, "paragraphs", "content", "embedding", queryText, queryVector, textWeight, size);
+        }
+
         try {
             double textScore = (textWeight != null) ? Math.max(0.0, Math.min(textWeight, 1.0)) : 0.5;
             double vectorScore = 1.0 - textScore;
@@ -459,9 +487,134 @@ public class OpenSearchService {
     }
 
     /**
+     * Nested 필드 대상 하이브리드 검색
+     */
+    public SearchResultDto searchNestedHybrid(String indexName, String nestedPath, 
+                                              String textField, String vectorField,
+                                              String queryText, List<Double> queryVector,
+                                              Double textWeight, Integer size) {
+        try {
+            double textScore = (textWeight != null) ? Math.max(0.0, Math.min(textWeight, 1.0)) : 0.5;
+            double vectorScore = 1.0 - textScore;
+            
+            float[] vectorArray = new float[queryVector.size()];
+            for (int i = 0; i < queryVector.size(); i++) {
+                vectorArray[i] = queryVector.get(i).floatValue();
+            }
+
+            SearchRequest request = new SearchRequest.Builder()
+                    .index(indexName)
+                    .size(size)
+                    .query(q -> q
+                            .bool(b -> b
+                                    .should(s -> s
+                                            .nested(n -> n
+                                                    .path(nestedPath)
+                                                    .query(nq -> nq
+                                                            .match(m -> m
+                                                                    .field(nestedPath + "." + textField)
+                                                                    .query(FieldValue.of(queryText))
+                                                                    .boost((float) textScore)
+                                                            )
+                                                    )
+                                                    .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
+                                            )
+                                    )
+                                    .should(s -> s
+                                            .nested(n -> n
+                                                    .path(nestedPath)
+                                                    .query(nq -> nq
+                                                            .knn(k -> k
+                                                                    .field(nestedPath + "." + vectorField)
+                                                                    .vector(vectorArray)
+                                                                    .k(size)
+                                                                    .boost((float) vectorScore)
+                                                            )
+                                                    )
+                                                    .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
+                                            )
+                                    )
+                            )
+                    )
+                    .build();
+
+            SearchResponse<Map> response = openSearchClient.search(request, Map.class);
+            
+            List<Map<String, Object>> documents = response.hits().hits().stream()
+                    .map(hit -> {
+                        Map<String, Object> source = new HashMap<>();
+                        if (hit.source() != null) {
+                            source.putAll(hit.source());
+                        }
+                        source.put("_id", hit.id());
+                        source.put("_score", hit.score());
+                        return source;
+                    })
+                    .collect(Collectors.toList());
+
+            return SearchResultDto.builder()
+                    .totalHits(response.hits().total().value())
+                    .documents(documents)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Nested 하이브리드 검색 실패", e);
+            throw new RuntimeException("Nested 하이브리드 검색 실패", e);
+        }
+    }
+
+    /**
+     * Nested 필드 대상 전문 검색 (텍스트만)
+     */
+    public SearchResultDto searchNestedText(String indexName, String nestedPath, 
+                                            String textField, String queryText, int size) {
+        try {
+            SearchRequest request = new SearchRequest.Builder()
+                    .index(indexName)
+                    .size(size)
+                    .query(q -> q
+                            .nested(n -> n
+                                    .path(nestedPath)
+                                    .query(nq -> nq
+                                            .match(m -> m
+                                                    .field(nestedPath + "." + textField)
+                                                    .query(FieldValue.of(queryText))
+                                            )
+                                    )
+                                    .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
+                            )
+                    )
+                    .build();
+
+            SearchResponse<Map> response = openSearchClient.search(request, Map.class);
+            
+            List<Map<String, Object>> documents = response.hits().hits().stream()
+                    .map(hit -> {
+                        Map<String, Object> source = new HashMap<>();
+                        if (hit.source() != null) {
+                            source.putAll(hit.source());
+                        }
+                        source.put("_id", hit.id());
+                        source.put("_score", hit.score());
+                        return source;
+                    })
+                    .collect(Collectors.toList());
+
+            return SearchResultDto.builder()
+                    .totalHits(response.hits().total().value())
+                    .documents(documents)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Nested 전문 검색 실패", e);
+            throw new RuntimeException("Nested 전문 검색 실패", e);
+        }
+    }
+
+    /**
      * 인덱스 설정 생성 (custom analyzer 포함)
      */
-    private IndexSettings createIndexSettings(Integer numberOfShards, Integer numberOfReplicas, String indexName) {
+    private IndexSettings createIndexSettings(Integer numberOfShards, Integer numberOfReplicas, IndexDefinition definition) {
         List<String> synonyms = analyzerConfigLoader.loadSynonyms();
         List<String> stopwords = analyzerConfigLoader.loadStopwords();
         
@@ -481,7 +634,7 @@ public class OpenSearchService {
                         )
                 );
 
-        if (vectorFieldConfig.hasVectorField(indexName)) {
+        if (vectorFieldConfig.hasVectorField(definition.getIndexName()) || hasKnnVector(definition.getFields())) {
             builder.knn(true);
         }
         return builder.build();
@@ -541,6 +694,16 @@ public class OpenSearchService {
                 int dimension = field.getDimension() != null ? field.getDimension() : 768;
                 return knn.dimension(dimension)
                           .method(method -> method.name("hnsw").spaceType("cosinesimil").engine("lucene"));
+            }));
+            case NESTED -> Property.of(p -> p.nested(n -> {
+                if (field.getSubFields() != null) {
+                    Map<String, Property> subProps = new HashMap<>();
+                    for (FieldDefinition sub : field.getSubFields()) {
+                        subProps.put(sub.getEffectiveFieldName(), convertToProperty(sub));
+                    }
+                    n.properties(subProps);
+                }
+                return n;
             }));
             default -> Property.of(p -> p.text(t -> t));
         };

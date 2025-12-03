@@ -71,10 +71,13 @@ services:
       # Override hosts for container networking
       - OPEN_SEARCH_HOST=opensearch-node
       - EMBEDDING_URL=http://embedding-service
-      # DB connection details are loaded from .env automatically
+      - UPLOAD_PATH=/app/upload # 컨테이너 내부에서 사용될 UPLOAD_PATH
+      - SEARCH_INDEXES_FILE_LOCAL_PATH_PREFIX=/Users/centerlink/app/upload # localPathPrefix 명시적 설정
     depends_on:
       - opensearch-node
       - embedding-service
+    volumes:
+      - "${UPLOAD_PATH}:/app/upload" # 호스트의 UPLOAD_PATH를 컨테이너의 /app/upload로 마운트
     networks:
       - search-net
 
