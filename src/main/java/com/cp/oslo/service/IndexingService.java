@@ -342,6 +342,23 @@ public class IndexingService {
         }
     }
 
+    /**
+     * 단건 문서 삭제
+     */
+    public void deleteDocument(String indexName, String uuid) {
+        if (!openSearchService.indexExists(indexName)) {
+             log.warn("인덱스가 존재하지 않아 삭제를 건너뜁니다: {}", indexName);
+             return;
+        }
+        
+        boolean deleted = openSearchService.deleteDocument(indexName, uuid);
+        if (deleted) {
+            log.info("문서 삭제 완료: index={}, uuid={}", indexName, uuid);
+        } else {
+            log.warn("문서를 찾을 수 없거나 삭제에 실패했습니다: index={}, uuid={}", indexName, uuid);
+        }
+    }
+
     private Map<String, Object> fetchDocumentByUuid(IndexDefinition definition, String uuid) {
         // ... 단건 조회 로직 ...
         String idColumn = definition.getIdColumn(); // IndexDefinition에서 명확한 ID 컬럼 획득

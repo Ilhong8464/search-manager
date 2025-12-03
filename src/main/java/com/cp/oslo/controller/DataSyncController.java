@@ -58,4 +58,36 @@ public class DataSyncController {
             return ResponseEntity.internalServerError().body(result);
         }
     }
+
+    @DeleteMapping("/{indexName}/{uuid}")
+    public ResponseEntity<Map<String, Object>> deleteDocument(
+            @PathVariable String indexName,
+            @PathVariable String uuid) {
+        
+        log.info("단건 삭제 요청: index={}, uuid={}", indexName, uuid);
+
+        Map<String, Object> result = new HashMap<>();
+
+        if (uuid == null || uuid.trim().isEmpty()) {
+            result.put("success", false);
+            result.put("message", "uuid는 필수입니다.");
+            return ResponseEntity.badRequest().body(result);
+        }
+
+        try {
+            indexingService.deleteDocument(indexName, uuid);
+
+            result.put("success", true);
+            result.put("message", "단건 삭제가 완료되었습니다.");
+            result.put("indexName", indexName);
+            result.put("uuid", uuid);
+            return ResponseEntity.ok(result);
+
+        } catch (Exception e) {
+            log.error("단건 삭제 중 오류 발생", e);
+            result.put("success", false);
+            result.put("message", "단건 삭제 실패: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(result);
+        }
+    }
 }
