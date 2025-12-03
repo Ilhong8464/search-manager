@@ -11,6 +11,7 @@ services:
     container_name: opensearch-node
     env_file: .env
     environment:
+      - TZ=Asia/Seoul
       - cluster.name=opensearch-cluster
       - node.name=opensearch-node
       - discovery.type=single-node
@@ -46,6 +47,7 @@ services:
     ports:
       - "${EMBEDDING_PORT}:8000"
     environment:
+      - TZ=Asia/Seoul
       - HF_HOME=/root/.cache/huggingface
     volumes:
       - ${UPLOAD_PATH}/embedding-model:/root/.cache/huggingface
@@ -65,6 +67,7 @@ services:
     ports:
       - "${SERVER_PORT}:80"
     environment:
+      - TZ=Asia/Seoul
       # Override hosts for container networking
       - OPEN_SEARCH_HOST=opensearch-node
       - EMBEDDING_URL=http://embedding-service
