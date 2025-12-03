@@ -1,0 +1,28 @@
+package com.cp.oslo.repository;
+
+import com.cp.oslo.domain.TbFile;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface TbFileRepository extends JpaRepository<TbFile, Long> {
+
+    Optional<TbFile> findByFileUuid(String fileUuid);
+
+    // 인덱싱 가능한 파일 타입만 조회 (PDF, Office, Text 등)
+    @Query("SELECT f FROM TbFile f WHERE " +
+            "f.contentType IN ('application/pdf', " +
+            "'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', " + // ppt, pptx
+            "'application/vnd.oasis.opendocument.presentation', 'application/vnd.oasis.opendocument.spreadsheet', " + // odp, ods
+            "'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', " + // xls, xlsx
+            "'text/csv', 'text/plain', " + // csv, txt
+            "'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', " + // doc, docx
+            "'application/vnd.oasis.opendocument.text', 'application/rtf', " + // odt, rtf
+            "'application/x-hwp', 'application/haansofthwp', 'application/vnd.hancom.hwp', 'application/hwp+zip', " + // hwp, hwpx
+            "'application/octet-stream')") // generic binary (often used for hwp or unknown types)
+    List<TbFile> findIndexableFiles();
+}

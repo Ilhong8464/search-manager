@@ -51,6 +51,11 @@ search:
       enabled: true
       auto-sync: false
       sync-interval-minutes: 60
+    file:
+      enabled: true
+      auto-sync: false
+      sync-interval-minutes: 60
+      local-path-prefix: "${UPLOAD_PATH}" # DB에 저장된 절대경로의 접두어
 
 # OpenSearch 설정
 opensearch:

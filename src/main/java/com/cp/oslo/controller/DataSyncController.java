@@ -25,22 +25,20 @@ public class DataSyncController {
      * 특정 인덱스의 단건 문서를 실시간으로 동기화(Upsert)합니다.
      * DB에서 해당 UUID의 최신 데이터를 조회하여 인덱싱합니다.
      *
-     * POST /api/v1/sync/{indexName}/document
-     * Body: { "uuid": "..." }
+     * POST /api/v1/sync/{indexName}/{uuid}
      */
-    @PostMapping("/{indexName}/document")
+    @PostMapping("/{indexName}/{uuid}")
     public ResponseEntity<Map<String, Object>> syncDocument(
             @PathVariable String indexName,
-            @RequestBody Map<String, String> requestBody) {
+            @PathVariable String uuid) {
         
-        String uuid = requestBody.get("uuid");
         log.info("단건 동기화 요청: index={}, uuid={}", indexName, uuid);
 
         Map<String, Object> result = new HashMap<>();
 
         if (uuid == null || uuid.trim().isEmpty()) {
             result.put("success", false);
-            result.put("message", "uuid 필드는 필수입니다.");
+            result.put("message", "uuid는 필수입니다.");
             return ResponseEntity.badRequest().body(result);
         }
 

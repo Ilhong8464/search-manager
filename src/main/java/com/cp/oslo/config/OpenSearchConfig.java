@@ -15,6 +15,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
 /**
  * OpenSearch 클라이언트 설정
  */
@@ -62,9 +65,13 @@ public class OpenSearchConfig {
         RestClient restClient = builder.build();
 
         // Transport 생성
+        // JacksonJsonpMapper에 JavaTimeModule 등록
+        JacksonJsonpMapper jacksonJsonpMapper = new JacksonJsonpMapper(
+            new ObjectMapper().registerModule(new JavaTimeModule())
+        );
         RestClientTransport transport = new RestClientTransport(
                 restClient,
-                new JacksonJsonpMapper()
+                jacksonJsonpMapper
         );
 
         return new OpenSearchClient(transport);

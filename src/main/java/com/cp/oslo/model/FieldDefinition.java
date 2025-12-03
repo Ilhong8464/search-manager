@@ -22,11 +22,14 @@ public class FieldDefinition {
     // Vector 설정
     private final Integer dimension;
 
+    // Nested 필드 설정
+    private final java.util.List<FieldDefinition> subFields;
+
     public String getEffectiveFieldName() {
         return targetField != null ? targetField : sourceColumn;
     }
 
     public enum FieldType {
-        TEXT, KEYWORD, INTEGER, LONG, DOUBLE, FLOAT, BOOLEAN, DATE, OBJECT, KNN_VECTOR
+        TEXT, KEYWORD, INTEGER, LONG, DOUBLE, FLOAT, BOOLEAN, DATE, OBJECT, KNN_VECTOR, NESTED
     }
 }

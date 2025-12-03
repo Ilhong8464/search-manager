@@ -99,6 +99,37 @@ public class IndexRegistry {
                         field("EXTENTION", FieldType.KEYWORD)
                 ))
                 .build());
+
+        // 6. File 인덱스 정의
+        definitions.put("file", IndexDefinition.builder()
+                .indexName("file")
+                .sourceTableName("TB_FILE")
+                .description("첨부파일")
+                .idColumn("FILE_ID")
+                .fields(List.of(
+                        field("FILE_ID", FieldType.KEYWORD),
+                        field("FILE_NM", FieldType.TEXT, "nori"),
+                        field("SAVED_FILE_PATH", FieldType.KEYWORD),
+                        field("FILE_UUID", FieldType.KEYWORD),
+                        field("URL", FieldType.KEYWORD),
+                        field("CONTENT_TYPE", FieldType.KEYWORD),
+                        field("REG_DT", FieldType.DATE),
+                        FieldDefinition.builder()
+                                .targetField("paragraphs")
+                                .type(FieldType.NESTED)
+                                .indexed(true)
+                                .subFields(List.of(
+                                        field("content", FieldType.TEXT, "nori"),
+                                        FieldDefinition.builder()
+                                                .targetField("embedding")
+                                                .type(FieldType.KNN_VECTOR)
+                                                .dimension(768)
+                                                .indexed(true)
+                                                .build()
+                                ))
+                                .build()
+                ))
+                .build());
     }
 
     public IndexDefinition get(String indexName) {

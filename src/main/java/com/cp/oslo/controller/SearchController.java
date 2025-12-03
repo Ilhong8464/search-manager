@@ -53,6 +53,10 @@ public class SearchController {
 
         SearchResultDto searchResult = openSearchService.search(indexName, query, operator, size); // 반환 타입 변경
         
+        if ("file".equalsIgnoreCase(indexName)) {
+            return ResponseEntity.ok(processFileResponse(searchResult, query));
+        }
+        
         Map<String, Map<String, List<String>>> highlightsMap = searchResult.getHighlights();
 
         List<Map<String, Object>> results = searchResult.getDocuments().stream() // documents 사용
@@ -196,6 +200,10 @@ public class SearchController {
         SearchResultDto searchResult = openSearchService.hybridSearch(
                 indexName, fieldList, vectorFieldName, query, queryVector, textWeight, size);
         
+        if ("file".equalsIgnoreCase(indexName)) {
+            return ResponseEntity.ok(processFileResponse(searchResult, query));
+        }
+        
         List<Map<String, Object>> results = searchResult.getDocuments().stream()
                 .map(source -> {
                     Map<String, Object> result = convertKeysToCamelCase(source);
@@ -233,5 +241,56 @@ public class SearchController {
                         (oldValue, newValue) -> oldValue, // 중복 키 발생 시 기존 값 유지
                         java.util.LinkedHashMap::new // 순서 유지
                 ));
+    }
+
+    private Map<String, Object> processFileResponse(SearchResultDto result, String query) {
+        List<Map<String, Object>> processedDocuments = result.getDocuments().stream()
+                .map(doc -> {
+                    Map<String, Object> newDoc = new HashMap<>();
+                    newDoc.put("fileNm", doc.get("FILE_NM"));
+                    newDoc.put("fileUuid", doc.get("FILE_UUID"));
+                    
+                    if (doc.containsKey("_score")) {
+                        newDoc.put("score", doc.get("_score"));
+                    }
+                    
+                    Object paragraphsObj = doc.get("paragraphs");
+                    if (paragraphsObj instanceof List) {
+                        List<?> paragraphs = (List<?>) paragraphsObj;
+                        List<String> contents = paragraphs.stream()
+                                .map(p -> {
+                                    if (p instanceof Map) {
+                                        return (String) ((Map<?, ?>) p).get("content");
+                                    }
+                                    return null;
+                                })
+                                .filter(s -> s != null)
+                                .collect(Collectors.toList());
+                        newDoc.put("content", contents);
+                    }
+                    
+                    return newDoc;
+                })
+                .collect(Collectors.collectingAndThen(
+                    Collectors.toMap(
+                        doc -> doc.get("fileUuid").toString(),
+                        doc -> doc,
+                        (existing, replacement) -> {
+                            Double existingScore = (Double) existing.getOrDefault("score", 0.0);
+                            Double replacementScore = (Double) replacement.getOrDefault("score", 0.0);
+                            return existingScore >= replacementScore ? existing : replacement;
+                        },
+                        java.util.LinkedHashMap::new
+                    ),
+                    map -> new java.util.ArrayList<>(map.values())
+                ));
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("total", processedDocuments.size());
+        response.put("size", processedDocuments.size());
+        response.put("query", query);
+        response.put("results", processedDocuments);
+        
+        return response;
     }
 }

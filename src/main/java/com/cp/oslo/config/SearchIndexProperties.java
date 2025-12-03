@@ -28,5 +28,6 @@ public class SearchIndexProperties {
         private boolean autoSync = true;
         private int syncIntervalMinutes = 60;
         private String description;
+        private String localPathPrefix; // 추가: 파일 경로 매핑 접두어
     }
 }

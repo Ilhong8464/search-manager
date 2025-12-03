@@ -21,6 +21,9 @@ public class EmbeddingClient {
     public EmbeddingClient(@Value("${embedding.service.url:http://localhost:8000}") String embeddingServiceUrl) {
         this.webClient = WebClient.builder()
                 .baseUrl(embeddingServiceUrl)
+                .exchangeStrategies(org.springframework.web.reactive.function.client.ExchangeStrategies.builder()
+                        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024)) // 16MB
+                        .build())
                 .build();
         log.info("EmbeddingClient 초기화: {}", embeddingServiceUrl);
     }
