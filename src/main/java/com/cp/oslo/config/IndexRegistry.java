@@ -71,15 +71,15 @@ public class IndexRegistry {
                 ))
                 .build());
 
-        // 4. Doc Notice 인덱스 정의
-        definitions.put("doc-notice", IndexDefinition.builder()
-                .indexName("doc-notice")
-                .sourceTableName("uvw_doc_notice")
+        // 4. Notice 인덱스 정의
+        definitions.put("notice", IndexDefinition.builder()
+                .indexName("notice")
+                .sourceTableName("uvw_doc_notice") // DB 뷰 이름은 uvw_doc_notice 유지
                 .description("공지사항")
-                .idColumn("DOC_UUID")
+                .idColumn("DOC_UUID") // DB 컬럼명 DOC_UUID 유지
                 .fields(List.of(
-                        field("DOC_UUID", FieldType.KEYWORD),
-                        field("DOC_NM", FieldType.TEXT, "nori"),
+                        field("DOC_UUID", FieldType.KEYWORD), // DB 컬럼명 DOC_UUID 유지
+                        field("DOC_NM", FieldType.TEXT, "nori"), // DB 컬럼명 DOC_NM 유지
                         field("CONTENTS", FieldType.TEXT, "nori"),
                         field("REG_DT", FieldType.DATE)
                 ))

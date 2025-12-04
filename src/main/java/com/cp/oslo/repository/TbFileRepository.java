@@ -3,6 +3,7 @@ package com.cp.oslo.repository;
 import com.cp.oslo.domain.TbFile;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -23,6 +24,6 @@ public interface TbFileRepository extends JpaRepository<TbFile, Long> {
             "'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', " + // doc, docx
             "'application/vnd.oasis.opendocument.text', 'application/rtf', " + // odt, rtf
             "'application/x-hwp', 'application/haansofthwp', 'application/vnd.hancom.hwp', 'application/hwp+zip', " + // hwp, hwpx
-            "'application/octet-stream')") // generic binary (often used for hwp or unknown types)
-    List<TbFile> findIndexableFiles();
+            "'application/octet-stream') AND f.srcId1 IN :srcId1List") // generic binary (often used for hwp or unknown types)
+    List<TbFile> findIndexableFilesByContentTypesAndSrcId1In(@Param("srcId1List") List<String> srcId1List);
 }

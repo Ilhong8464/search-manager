@@ -43,8 +43,8 @@ search:
       enabled: false
       auto-sync: false
       sync-interval-minutes: 10 #call인덱스는 마지막 동기화시간(DB의 sync_history테이블)으로부터 설정한 시간(분) 후 다시 시작
-    doc-notice:
-      enabled: false
+    notice:
+      enabled: true
       auto-sync: false
       sync-interval-minutes: 30 #설정 시간(분)마다 실행
     unified:
@@ -96,7 +96,7 @@ embedding:
       dimension: 768
       engine: lucene
       space-type: cosinesimil
-    doc-notice:
+    notice:
       source-field: DOC_NM,CONTENTS  # doc_nm과 contents를 합쳐서 임베딩 생성
       target-field: embedding
       dimension: 768

@@ -20,18 +20,18 @@ public class GlobalSyncScheduler {
     private final IndexingService indexingService;
 
     /**
-     * 매일 새벽 3시에 전체 동기화 실행
-     * application.yml의 search.sync.cron 설정값을 따르며, 기본값은 매일 03:00:00 입니다.
+     * 매일 새벽 1시에 전체 동기화 실행
+     * application.yml의 search.sync.cron 설정값을 따르며, 기본값은 매일 01:00:00 입니다.
      */
-    @Scheduled(cron = "${search.sync.cron:0 0 3 * * *}")
+    @Scheduled(cron = "${search.sync.cron:0 0 1 * * *}")
     public void runDailySync() {
         log.info("========================================");
         log.info("스케줄러에 의한 전체 동기화 시작 (Time: {})", LocalDateTime.now());
         log.info("========================================");
 
         try {
-            indexingService.syncAllEnabledIndexes();
-            log.info("스케줄러 전체 동기화 작업 완료");
+            indexingService.reindexAllEnabledIndexes();
+            log.info("스케줄러 전체 동기화(Re-index) 작업 완료");
         } catch (Exception e) {
             log.error("스케줄러 전체 동기화 중 오류 발생", e);
         }

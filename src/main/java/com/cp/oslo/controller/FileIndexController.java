@@ -1,7 +1,10 @@
 package com.cp.oslo.controller;
 
+import com.cp.oslo.client.EmbeddingClient;
 import com.cp.oslo.dto.SearchResultDto;
 import com.cp.oslo.service.FileIndexingService;
+import com.cp.oslo.service.IndexingService;
+import com.cp.oslo.service.OpenSearchService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -11,19 +14,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import lombok.extern.slf4j.Slf4j;
+
 @RestController
 @RequestMapping("/api/v1/file-index")
 @RequiredArgsConstructor
+@Slf4j
 public class FileIndexController {
 
     private final FileIndexingService fileIndexingService;
-    private final com.cp.oslo.util.AnalyzerConfigLoader analyzerConfigLoader;
+    private final IndexingService indexingService;
+    private final OpenSearchService openSearchService;
+    private final EmbeddingClient embeddingClient;
+
+    private final com.cp.oslo.config.SearchIndexProperties searchIndexProperties;
 
     @PostMapping("/sync")
     public ResponseEntity<?> sync() {
         // 대량의 파일 처리 시 시간이 오래 걸릴 수 있으므로 비동기 처리를 고려해야 하지만,
         // 현재는 명시적 호출에 의한 동기 처리로 구현합니다.
-        fileIndexingService.indexAllFiles();
+        indexingService.syncIndex("file");
         return ResponseEntity.ok(Map.of("message", "파일 인덱싱이 완료되었습니다."));
     }
 
@@ -44,21 +54,17 @@ public class FileIndexController {
         }
 
         if (size == null) {
-            size = analyzerConfigLoader.loadSearchSize();
-            if (size == null) size = 10;
-        }
-        
-        if (textWeight == null) {
-            textWeight = analyzerConfigLoader.loadSearchWeight();
+            Integer defaultSize = searchIndexProperties.getIndexes().get("file").getDefaultSearchSize();
+            size = (defaultSize != null) ? defaultSize : 10;
         }
         
         // Validate
         size = Math.max(1, Math.min(size, 100));
-        if (textWeight != null) {
-            textWeight = Math.max(0.0, Math.min(textWeight, 1.0));
-        }
 
-        SearchResultDto result = fileIndexingService.search(query, textWeight, size);
+        // 전문 검색 (Full-text Search) 수행
+        // textWeight는 사용하지 않음
+        SearchResultDto result = openSearchService.searchNestedText("file", "paragraphs", "content", query, size);
+        
         return ResponseEntity.ok(processResponse(result));
     }
 
@@ -72,8 +78,8 @@ public class FileIndexController {
         }
 
         if (size == null) {
-            size = analyzerConfigLoader.loadSearchSize();
-            if (size == null) size = 10;
+            Integer defaultSize = searchIndexProperties.getIndexes().get("file").getDefaultSearchSize();
+            size = (defaultSize != null) ? defaultSize : 10;
         }
         size = Math.max(1, Math.min(size, 100));
 
@@ -82,31 +88,58 @@ public class FileIndexController {
     }
 
     private Map<String, Object> processResponse(SearchResultDto result) {
+        Map<String, Map<String, List<String>>> highlights = result.getHighlights(); // 하이라이트 정보 가져오기
+        
         List<Map<String, Object>> processedDocuments = result.getDocuments().stream()
                 .map(doc -> {
                     Map<String, Object> newDoc = new HashMap<>();
-                    newDoc.put("FILE_NM", doc.get("FILE_NM"));
-                    newDoc.put("FILE_UUID", doc.get("FILE_UUID"));
+                    String fileUuid = doc.get("FILE_UUID").toString();
+                    String docId = doc.get("_id").toString();
+                    
+                    // 1. FILE_NM 처리 (하이라이트 우선)
+                    if (highlights != null && highlights.containsKey(docId) && highlights.get(docId).containsKey("FILE_NM")) {
+                        newDoc.put("FILE_NM", highlights.get(docId).get("FILE_NM").get(0));
+                    } else {
+                        newDoc.put("FILE_NM", doc.get("FILE_NM"));
+                    }
+                    
+                    newDoc.put("FILE_UUID", fileUuid);
                     
                     if (doc.containsKey("_score")) {
                         newDoc.put("score", doc.get("_score"));
                     }
                     
-                    // paragraphs 처리
-                    Object paragraphsObj = doc.get("paragraphs");
-                    if (paragraphsObj instanceof List) {
-                        List<?> paragraphs = (List<?>) paragraphsObj;
-                        List<String> contents = paragraphs.stream()
-                                .map(p -> {
-                                    if (p instanceof Map) {
-                                        return (String) ((Map<?, ?>) p).get("content");
-                                    }
-                                    return null;
-                                })
-                                .filter(s -> s != null)
-                                .collect(Collectors.toList());
-                        newDoc.put("content", contents);
+                    // 2. Content 처리 (하이라이트 우선)
+                    List<String> contents = null;
+                    
+                    // 하이라이트가 있으면 그것을 사용
+                    if (highlights != null && highlights.containsKey(docId)) {
+                        Map<String, List<String>> docHighlights = highlights.get(docId);
+                        // paragraphs.content 하이라이트 확인
+                        if (docHighlights.containsKey("paragraphs.content")) {
+                            contents = docHighlights.get("paragraphs.content");
+                        }
                     }
+                    
+                    // 하이라이트가 없으면 원본 content 사용 (기존 로직)
+                    if (contents == null) {
+                        Object paragraphsObj = doc.get("paragraphs");
+                        if (paragraphsObj instanceof List) {
+                            List<?> paragraphs = (List<?>) paragraphsObj;
+                            contents = paragraphs.stream()
+                                    .map(p -> {
+                                        if (p instanceof Map) {
+                                            return (String) ((Map<?, ?>) p).get("content");
+                                        }
+                                        return null;
+                                    })
+                                    .filter(s -> s != null)
+                                    .limit(3) // 원본은 너무 길 수 있으므로 앞부분 3개만 (또는 적절히 조절)
+                                    .collect(Collectors.toList());
+                        }
+                    }
+                    
+                    newDoc.put("content", contents);
                     
                     return newDoc;
                 })
@@ -132,4 +165,3 @@ public class FileIndexController {
         return response;
     }
 }
-        
