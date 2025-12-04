@@ -67,6 +67,11 @@ public class IndexingService {
     }
 
     private SyncHistory syncFileIndex() {
+        if (!isFileConfigEnabled()) {
+            log.info("파일 인덱싱 건너뜀: 파일 인덱스가 비활성화 상태입니다.");
+            return null;
+        }
+
         log.info("========================================");
         log.info("동기화 시작: file");
         log.info("========================================");
@@ -120,9 +125,16 @@ public class IndexingService {
                 log.info("인덱스 생성 중...");
                 openSearchService.createIndex(definition);
             } else if ("unified".equals(definition.getIndexName())) {
-                // unified 인덱스이고 이미 존재하는 경우: 비활성화된 데이터 타입 삭제 (TB_CONFIG 기준)
                 List<String> enabledTypes = fetchEnabledDataTypes();
-                if (!enabledTypes.isEmpty()) {
+                if (enabledTypes.isEmpty()) {
+                    // 모든 데이터 타입이 비활성화된 경우: unified 인덱스의 모든 데이터를 삭제
+                    log.info("모든 데이터 타입이 비활성화되어, unified 인덱스의 모든 데이터를 삭제합니다.");
+                    // 인덱스가 존재하면 삭제 후 재생성 (이렇게 하면 인덱스가 비워짐)
+                    if (openSearchService.indexExists(definition.getIndexName())) {
+                        openSearchService.deleteIndex(definition.getIndexName());
+                        openSearchService.createIndex(definition); // 빈 인덱스 재생성
+                    }
+                } else {
                     log.info("비활성화된 데이터 정리 중... (활성화된 타입: {})", enabledTypes);
                     openSearchService.deleteDocumentsNotInTypes(definition.getIndexName(), "DATA_TYPE", enabledTypes);
                 }
@@ -288,15 +300,17 @@ public class IndexingService {
     }
 
     /**
-     * TB_CONFIG 테이블에서 활성화된(CONFIG_VALUE='Y') 검색 컬렉션 타입 조회
+     * TB_CONFIG 테이블에서 활성화된(CONFIG_VALUE='Y') 검색 컬렉션 타입 조회 (File 제외)
      */
     private List<String> fetchEnabledDataTypes() {
         try {
             // KEY_PATH가 'System.SearchEngine.Collection.'으로 시작하고 CONFIG_VALUE가 'Y'인 항목 조회
             // CONFIG_KEY를 대문자로 변환하여 반환 (예: Call -> CALL)
+            // 단, 'FILE'은 별도 인덱스로 관리되므로 제외
             String sql = "SELECT UPPER(CONFIG_KEY) FROM TB_CONFIG " +
                          "WHERE KEY_PATH LIKE 'System.SearchEngine.Collection.%' " +
-                         "AND CONFIG_VALUE = 'Y'";
+                         "AND CONFIG_VALUE = 'Y' " +
+                         "AND UPPER(CONFIG_KEY) != 'FILE'";
             
             return jdbcTemplate.queryForList(sql, String.class);
         } catch (Exception e) {
@@ -309,7 +323,13 @@ public class IndexingService {
      * 단건 문서 동기화 (실시간 인덱싱)
      */
     public void syncDocument(String indexName, String uuid) {
-        // File 인덱스 특수 처리
+        // 1. 인덱스 활성화 여부 확인 (YML 설정 기반)
+        if (!isIndexEnabled(indexName)) {
+            log.warn("단건 동기화 건너뜀: 인덱스 '{}'가 YML 설정에 의해 비활성화되어 있습니다.", indexName);
+            return;
+        }
+
+        // 2. File 인덱스 특수 처리
         if ("file".equalsIgnoreCase(indexName)) {
             fileIndexingService.indexFileByUuid(uuid);
             return;
@@ -320,13 +340,25 @@ public class IndexingService {
              throw new IllegalArgumentException("알 수 없는 인덱스입니다: " + indexName);
         }
 
-//        log.info("단건 동기화 시작: index={}, uuid={}", indexName, uuid);
-
         try {
             Map<String, Object> document = fetchDocumentByUuid(definition, uuid);
             if (document == null) {
-                log.warn("데이터베이스에서 문서를 찾을 수 없습니다: uuid={}", uuid);
+                // 문서가 DB에 없으면 OpenSearch에서도 삭제
+                log.warn("데이터베이스에서 문서를 찾을 수 없습니다: uuid={}. OpenSearch에서 삭제 시도.", uuid);
+                openSearchService.deleteDocument(indexName, uuid); // OpenSearch에서 삭제
                 return;
+            }
+
+            // 3. unified 인덱스이고 TB_CONFIG에서 비활성화된 타입이면 인덱싱하지 않고 삭제
+            if ("unified".equals(indexName)) {
+                List<String> enabledTypes = fetchEnabledDataTypes(); // TB_CONFIG에서 활성화된 타입 목록 가져옴
+                String documentDataType = (String) document.get("DATA_TYPE"); // 문서의 DATA_TYPE 필드
+                
+                if (documentDataType == null || !enabledTypes.contains(documentDataType.toUpperCase())) {
+                    log.warn("단건 동기화 건너뜀: unified 인덱스의 문서 '{}' (DATA_TYPE: {})가 TB_CONFIG에서 비활성화되어 있습니다. OpenSearch에서 삭제 시도.", uuid, documentDataType);
+                    openSearchService.deleteDocument(indexName, uuid); // OpenSearch에서 삭제
+                    return;
+                }
             }
 
             // 문서 ID 설정
@@ -437,6 +469,35 @@ public class IndexingService {
     }
 
     /**
+     * 모든 활성화된 인덱스를 삭제 후 재생성(Re-index)
+     * 스케줄러 등에서 주기적으로 클린 인덱싱을 위해 사용
+     */
+    public void reindexAllEnabledIndexes() {
+        indexRegistry.getDefinitions().keySet().forEach(indexName -> {
+            if (isIndexEnabled(indexName)) {
+                // File 인덱스의 경우 별도 설정 확인
+                if ("file".equalsIgnoreCase(indexName) && !isFileConfigEnabled()) {
+                    return;
+                }
+
+                try {
+                    log.info("인덱스 재설정(삭제 후 생성) 시작: {}", indexName);
+                    // 1. 인덱스 삭제
+                    if (openSearchService.indexExists(indexName)) {
+                        openSearchService.deleteIndex(indexName);
+                    }
+                    
+                    // 2. 인덱스 동기화 (생성 및 데이터 주입)
+                    syncIndex(indexName);
+                    
+                } catch (Exception e) {
+                    log.error("인덱스 재설정 실패: {}", indexName, e);
+                }
+            }
+        });
+    }
+
+    /**
      * 주기적 동기화 체크
      */
     @Transactional
@@ -481,5 +542,25 @@ public class IndexingService {
         if (indexProperties.getIndexes() == null) return false;
         SearchIndexProperties.IndexSettings settings = indexProperties.getIndexes().get(indexName);
         return settings != null && settings.isEnabled();
+    }
+
+    /**
+     * 파일 인덱스 실행 여부를 DB 설정(tb_config)에서 조회
+     */
+    private boolean isFileConfigEnabled() {
+        try {
+            String sql = "SELECT config_value FROM tb_config WHERE key_path = 'System.SearchEngine.Collection.File'";
+            List<String> results = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("config_value"));
+
+            if (results.isEmpty()) {
+                log.warn("파일 인덱스 설정(System.SearchEngine.Collection.File)이 DB에 없습니다. 기본값(N) 처리합니다.");
+                return false;
+            }
+
+            return "Y".equalsIgnoreCase(results.get(0));
+        } catch (Exception e) {
+            log.error("파일 인덱스 설정 조회 중 오류 발생", e);
+            return false;
+        }
     }
 }

@@ -13,6 +13,7 @@ import org.apache.tika.sax.BodyContentHandler;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.JdbcTemplate; // 추가: JdbcTemplate import
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -21,6 +22,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors; // 추가
+import java.util.Collections; // 추가
 
 @Service
 @RequiredArgsConstructor
@@ -31,12 +34,35 @@ public class FileIndexingService {
     private final OpenSearchService openSearchService;
     private final EmbeddingClient embeddingClient;
     private final IndexRegistry indexRegistry;
-    private final SearchIndexProperties searchIndexProperties; // SearchIndexProperties 주입
+    private final SearchIndexProperties searchIndexProperties;
+    private final JdbcTemplate jdbcTemplate; // JdbcTemplate 주입 // SearchIndexProperties 주입
 
     @Value("${logging.file.path:/app/upload}")
     private String containerUploadPath;
 
-    // localPathPrefix는 SearchIndexProperties에서 가져옵니다.
+    /**
+     * TB_CONFIG 테이블에서 활성화된 파일 인덱싱 대상 컬렉션 타입 조회
+     * (CALL, MANUAL, NOTICE로 제한)
+     */
+    private List<String> fetchEnabledFileTypes() {
+        try {
+            // KEY_PATH가 'System.SearchEngine.Collection.'으로 시작하고 CONFIG_VALUE가 'Y'인 항목 조회
+            // CONFIG_KEY를 대문자로 변환하여 반환
+            String sql = "SELECT UPPER(CONFIG_KEY) FROM TB_CONFIG " +
+                         "WHERE KEY_PATH LIKE 'System.SearchEngine.Collection.%' " +
+                         "AND CONFIG_VALUE = 'Y'";
+            
+            List<String> rawEnabledTypes = jdbcTemplate.queryForList(sql, String.class);
+
+            // CALL, MANUAL, NOTICE 타입만 필터링
+            return rawEnabledTypes.stream()
+                                  .filter(type -> List.of("CALL", "MANUAL", "NOTICE").contains(type))
+                                  .collect(Collectors.toList());
+        } catch (Exception e) {
+            log.error("TB_CONFIG에서 활성화된 파일 타입 조회 실패", e);
+            return Collections.emptyList();
+        }
+    }
 
     @Transactional(readOnly = true)
     public void indexAllFiles() {
@@ -47,8 +73,16 @@ public class FileIndexingService {
             openSearchService.createIndex(indexRegistry.get("file"));
         }
 
-        // 2. 파일 조회
-        List<TbFile> files = tbFileRepository.findIndexableFiles();
+        // 2. 활성화된 파일 타입 (CALL, MANUAL, NOTICE) 조회
+        List<String> enabledTypes = fetchEnabledFileTypes();
+        if (enabledTypes.isEmpty()) {
+            log.warn("TB_CONFIG에 활성화된 파일 인덱싱 대상 타입(CALL, MANUAL, NOTICE)이 없습니다. 파일 인덱싱을 건너뜝니다.");
+            return;
+        }
+        log.info("인덱싱 대상 활성화된 파일 타입: {}", enabledTypes);
+
+        // 3. 파일 조회 (컨텐츠 타입 및 SRC_ID1 필터링)
+        List<TbFile> files = tbFileRepository.findIndexableFilesByContentTypesAndSrcId1In(enabledTypes);
         log.info("인덱싱 대상 파일 수: {}", files.size());
 
         int success = 0;
@@ -93,35 +127,15 @@ public class FileIndexingService {
         log.info("인덱싱 처리 중: [파일경로] {}/{}", file.getSavedFilePath(), file.getSavedFileNm());
         
         if (savedPath.startsWith(localPathPrefix)) {
-            realPath = savedPath.replace(localPathPrefix, containerUploadPath);
+            realPath = containerUploadPath + savedPath.substring(localPathPrefix.length());
         } else {
-            // 매칭되지 않으면 경로의 끝부분과 containerUploadPath를 결합 시도 (fallback)
-            // 예: /some/other/path/image/2025/10 -> /app/upload/image/2025/10 라고 가정하기 어려움.
-            // 그냥 원본 사용 시도하거나, URL 기반 추론
-             if (file.getUrl() != null && file.getUrl().startsWith("/")) {
-                 realPath = containerUploadPath + file.getUrl();
-                 // URL이 파일명까지 포함하므로 디렉토리 경로와 파일명 분리 필요 없음?
-                 // 하지만 URL은 웹 경로고 SAVED_FILE_PATH는 물리 경로임.
-                 // SAVED_FILE_NM이 실제 저장된 파일명.
-                 // 일단 savedPath 그대로 사용 시도
-                 realPath = savedPath; 
-             } else {
-                 realPath = savedPath;
-             }
+            // localPathPrefix가 savedPath의 시작 부분과 일치하지 않는 경우, 경로 매핑 실패로 간주
+            // 이 경우는 설정 오류일 가능성이 높으므로 명확하게 예외를 발생시키거나 로그를 남겨야 함.
+            log.error("파일 경로 매핑 실패: savedPath '{}'가 localPathPrefix '{}'로 시작하지 않습니다.", savedPath, localPathPrefix);
+            throw new IllegalArgumentException("파일 경로를 올바르게 매핑할 수 없습니다: " + savedPath);
         }
 
         File targetFile = new File(realPath, file.getSavedFileNm());
-
-        if (!targetFile.exists()) {
-            // fallback: URL 구조를 보고 경로 유추
-            // URL이 빈 문자열이 아니고 유효한 경우에만 시도
-            if (file.getUrl() != null && !file.getUrl().trim().isEmpty()) {
-                 File fallbackFile = new File(containerUploadPath + file.getUrl()); // URL에는 파일명 포함됨
-                 if (fallbackFile.exists() && !fallbackFile.isDirectory()) {
-                     targetFile = fallbackFile;
-                 }
-            }
-        }
 
         if (!targetFile.exists()) {
             throw new java.io.FileNotFoundException("파일을 찾을 수 없습니다: " + targetFile.getAbsolutePath());
@@ -187,10 +201,17 @@ public class FileIndexingService {
         while (start < len) {
             int end = Math.min(start + chunkSize, len);
             chunks.add(text.substring(start, end));
-            
-            if (end == len) break;
-            
+
+            if (end == len) {
+                break;
+            }
             start += (chunkSize - overlap);
+            // 다음 시작점이 현재 끝점을 넘어설 경우, 현재 끝점에서 시작하도록 조정
+            // 이는 다음 청크가 반드시 생성되도록 보장합니다.
+            if (start >= end) {
+                start = end - overlap;
+                if (start < 0) start = 0; // 시작점이 음수가 되지 않도록 방지
+            }
         }
 
         return chunks;

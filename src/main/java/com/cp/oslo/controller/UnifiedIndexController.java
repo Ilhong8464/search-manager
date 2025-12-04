@@ -95,4 +95,27 @@ public class UnifiedIndexController {
             return ResponseEntity.internalServerError().body(result);
         }
     }
+
+    /**
+     * unified 인덱스를 삭제합니다.
+     *
+     * DELETE /api/v1/unified-index
+     */
+    @DeleteMapping
+    public ResponseEntity<Map<String, Object>> deleteUnifiedIndex() {
+        log.info("unified 인덱스 삭제 요청");
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            boolean deleted = openSearchService.deleteIndex("unified");
+            result.put("success", deleted);
+            result.put("message", deleted ? "unified 인덱스 삭제 완료." : "unified 인덱스가 존재하지 않거나 삭제 실패.");
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("unified 인덱스 삭제 중 오류 발생", e);
+            result.put("success", false);
+            result.put("message", "unified 인덱스 삭제 실패: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(result);
+        }
+    }
 }

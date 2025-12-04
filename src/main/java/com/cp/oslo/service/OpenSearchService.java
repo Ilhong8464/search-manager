@@ -161,6 +161,18 @@ public class OpenSearchService {
     }
 
     /**
+     * OpenSearch 서비스 연결 확인
+     */
+    public boolean isAvailable() {
+        try {
+            return openSearchClient.ping().value();
+        } catch (Exception e) {
+            log.warn("OpenSearch 서비스 연결 실패: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * 필드 목록에 KNN_VECTOR 타입이 포함되어 있는지 재귀적으로 확인
      */
     private boolean hasKnnVector(List<FieldDefinition> fields) {
@@ -285,7 +297,7 @@ public class OpenSearchService {
                 targetFields = List.of("TITLE", "CONTENTS");
             } else if ("manual".equals(indexName)) { // manual 인덱스에 CAT_NM 필드 추가
                 targetFields = List.of("TITLE", "CONTENTS", "CAT_NM");
-            } else if ("doc-notice".equals(indexName)) {
+            } else if ("notice".equals(indexName)) {
                 targetFields = List.of("DOC_NM", "CONTENTS");
             } else if ("unified".equals(indexName)) {
                 targetFields = List.of("TITLE", "CONTENTS");
@@ -508,6 +520,13 @@ public class OpenSearchService {
                     .query(q -> q
                             .bool(b -> b
                                     .should(s -> s
+                                            .multiMatch(m -> m // FILE_NM을 텍스트 검색에 포함
+                                                    .fields("FILE_NM")
+                                                    .query(queryText)
+                                                    .boost((float) textScore)
+                                            )
+                                    )
+                                    .should(s -> s
                                             .nested(n -> n
                                                     .path(nestedPath)
                                                     .query(nq -> nq
@@ -536,9 +555,33 @@ public class OpenSearchService {
                                     )
                             )
                     )
+                    .highlight(h -> h
+                            .fields("FILE_NM", f -> f
+                                    .preTags("<b>")
+                                    .postTags("</b>")
+                                    .fragmentSize(100)
+                                    .numberOfFragments(1)
+                                    .requireFieldMatch(false)
+                            )
+                            .fields(nestedPath + "." + textField, f -> f
+                                    .preTags("<b>")
+                                    .postTags("</b>")
+                                    .fragmentSize(100)
+                                    .numberOfFragments(1)
+                                    .requireFieldMatch(false)
+                            )
+                    )
                     .build();
 
             SearchResponse<Map> response = openSearchClient.search(request, Map.class);
+
+            // 하이라이트 결과 파싱
+            Map<String, Map<String, List<String>>> highlights = new HashMap<>();
+            response.hits().hits().forEach(hit -> {
+                if (hit.highlight() != null && !hit.highlight().isEmpty()) {
+                    highlights.put(hit.id(), hit.highlight());
+                }
+            });
             
             List<Map<String, Object>> documents = response.hits().hits().stream()
                     .map(hit -> {
@@ -555,6 +598,7 @@ public class OpenSearchService {
             return SearchResultDto.builder()
                     .totalHits(response.hits().total().value())
                     .documents(documents)
+                    .highlights(highlights) // 하이라이트 정보 포함
                     .build();
 
         } catch (Exception e) {
@@ -573,20 +617,79 @@ public class OpenSearchService {
                     .index(indexName)
                     .size(size)
                     .query(q -> q
-                            .nested(n -> n
-                                    .path(nestedPath)
-                                    .query(nq -> nq
+                            .bool(b -> b
+                                    .should(s -> s
                                             .match(m -> m
-                                                    .field(nestedPath + "." + textField)
+                                                    .field("FILE_NM")
                                                     .query(FieldValue.of(queryText))
                                             )
                                     )
-                                    .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
+                                    .should(s -> s
+                                            .nested(n -> n
+                                                    .path(nestedPath)
+                                                    .query(nq -> nq
+                                                            .match(m -> m
+                                                                    .field(nestedPath + "." + textField)
+                                                                    .query(FieldValue.of(queryText))
+                                                            )
+                                                    )
+                                                    .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
+                                                    .innerHits(ih -> ih
+                                                            .name("nested_highlights")
+                                                            .highlight(ihh -> ihh
+                                                                    .fields(nestedPath + "." + textField, f -> f
+                                                                            .preTags("<b>")
+                                                                            .postTags("</b>")
+                                                                            .fragmentSize(100)
+                                                                            .numberOfFragments(1)
+                                                                            .requireFieldMatch(false)
+                                                                    )
+                                                            )
+                                                    )
+                                            )
+                                    )
+                                    .minimumShouldMatch("1")
+                            )
+                    )
+                    .highlight(h -> h
+                            .fields("FILE_NM", f -> f
+                                    .preTags("<b>")
+                                    .postTags("</b>")
+                                    .fragmentSize(100)
+                                    .numberOfFragments(1)
+                                    .requireFieldMatch(false)
                             )
                     )
                     .build();
 
             SearchResponse<Map> response = openSearchClient.search(request, Map.class);
+            
+            // 하이라이트 결과 파싱 (Inner Hits 포함)
+            Map<String, Map<String, List<String>>> highlights = new HashMap<>();
+            response.hits().hits().forEach(hit -> {
+                Map<String, List<String>> docHighlights = new HashMap<>();
+                
+                // 1. 상위 문서 하이라이트 (FILE_NM)
+                if (hit.highlight() != null) {
+                    docHighlights.putAll(hit.highlight());
+                }
+                
+                // 2. Nested Inner Hits 하이라이트 (content)
+                if (hit.innerHits() != null && hit.innerHits().containsKey("nested_highlights")) {
+                    var innerHitsResult = hit.innerHits().get("nested_highlights");
+                    for (var innerHit : innerHitsResult.hits().hits()) {
+                        if (innerHit.highlight() != null) {
+                            docHighlights.putAll(innerHit.highlight());
+                            // 첫 번째 매칭된 문단만 사용하려면 break;
+                            // 여기서는 여러 문단 중 하나라도 있으면 추가됨
+                        }
+                    }
+                }
+                
+                if (!docHighlights.isEmpty()) {
+                    highlights.put(hit.id(), docHighlights);
+                }
+            });
             
             List<Map<String, Object>> documents = response.hits().hits().stream()
                     .map(hit -> {
@@ -603,6 +706,7 @@ public class OpenSearchService {
             return SearchResultDto.builder()
                     .totalHits(response.hits().total().value())
                     .documents(documents)
+                    .highlights(highlights) // 하이라이트 정보 포함
                     .build();
 
         } catch (Exception e) {

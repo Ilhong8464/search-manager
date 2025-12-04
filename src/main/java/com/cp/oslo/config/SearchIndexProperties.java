@@ -29,5 +29,6 @@ public class SearchIndexProperties {
         private int syncIntervalMinutes = 60;
         private String description;
         private String localPathPrefix; // 추가: 파일 경로 매핑 접두어
+        private Integer defaultSearchSize; // 추가: 기본 검색 결과 크기
     }
 }
