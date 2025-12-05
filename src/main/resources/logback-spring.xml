@@ -25,7 +25,7 @@
                 <onMismatch>DENY</onMismatch>
             </filter>
             <!-- 현재 로그 파일 -->
-            <file>${LOG_HOME}/logs/${LOG_FILE_NAME}/${LOG_FILE_NAME}-${LOG_PORT}-${BY_DATE}.log</file>
+            <file>${LOG_HOME}/logs/${LOG_FILE_NAME}/${LOG_FILE_NAME}-${LOG_PORT}.log</file>
             <encoder>
                 <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
                 <charset>UTF-8</charset>
@@ -45,7 +45,7 @@
             <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
                 <level>warn</level> <!-- WARN 이상만 기록 -->
             </filter>
-            <file>${LOG_HOME}/logs/${LOG_FILE_NAME}/errors/${LOG_FILE_NAME}-${LOG_PORT}-${BY_DATE}.error.log</file>
+            <file>${LOG_HOME}/logs/${LOG_FILE_NAME}/errors/${LOG_FILE_NAME}-${LOG_PORT}.error.log</file>
             <encoder>
                 <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
                 <charset>UTF-8</charset>
