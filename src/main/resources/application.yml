@@ -44,7 +44,7 @@ search:
       auto-sync: false
       sync-interval-minutes: 10 #call인덱스는 마지막 동기화시간(DB의 sync_history테이블)으로부터 설정한 시간(분) 후 다시 시작
     notice:
-      enabled: true
+      enabled: false
       auto-sync: false
       sync-interval-minutes: 30 #설정 시간(분)마다 실행
     unified:
