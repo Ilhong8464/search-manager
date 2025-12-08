@@ -740,21 +740,46 @@ public class OpenSearchService {
         List<String> synonyms = analyzerConfigLoader.loadSynonyms();
         List<String> stopwords = analyzerConfigLoader.loadStopwords();
         
+        List<String> filters = new java.util.ArrayList<>();
+        filters.add("lowercase");
+        
+        // 동의어 필터가 유효한지 확인하고 필터 목록에 추가
+        boolean hasSynonyms = synonyms != null && !synonyms.isEmpty();
+        if (hasSynonyms) {
+            filters.add("synonym_filter");
+        }
+        
+        // 불용어 필터가 유효한지 확인하고 필터 목록에 추가
+        boolean hasStopwords = stopwords != null && !stopwords.isEmpty();
+        if (hasStopwords) {
+            filters.add("stopword_filter");
+        }
+        
+        filters.add("nori_readingform");
+
         IndexSettings.Builder builder = new IndexSettings.Builder()
                 .numberOfShards(String.valueOf(numberOfShards))
                 .numberOfReplicas(String.valueOf(numberOfReplicas))
-                .analysis(a -> a
-                        .filter("synonym_filter", tf -> tf
-                                .definition(tfd -> tfd.synonym(syn -> syn.synonyms(synonyms))))
-                        .filter("stopword_filter", tf -> tf
-                                .definition(tfd -> tfd.stop(stop -> stop.stopwords(stopwords))))
-                        .analyzer("nori_custom", an -> an
-                                .custom(ca -> ca
-                                        .tokenizer("nori_tokenizer")
-                                        .filter("lowercase", "synonym_filter", "stopword_filter", "nori_readingform")
-                                )
-                        )
-                );
+                .analysis(a -> {
+                    // 1. 필터 정의 (조건부)
+                    if (hasSynonyms) {
+                        a.filter("synonym_filter", tf -> tf
+                                .definition(tfd -> tfd.synonym(syn -> syn.synonyms(synonyms))));
+                    }
+                    if (hasStopwords) {
+                        a.filter("stopword_filter", tf -> tf
+                                .definition(tfd -> tfd.stop(stop -> stop.stopwords(stopwords))));
+                    }
+                    
+                    // 2. 분석기 정의
+                    a.analyzer("nori_custom", an -> an
+                            .custom(ca -> ca
+                                    .tokenizer("nori_tokenizer")
+                                    .filter(filters)
+                            )
+                    );
+                    return a;
+                });
 
         if (vectorFieldConfig.hasVectorField(definition.getIndexName()) || hasKnnVector(definition.getFields())) {
             builder.knn(true);

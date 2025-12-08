@@ -234,13 +234,14 @@ public class SearchController {
     }
 
     private Map<String, Object> convertKeysToCamelCase(Map<String, Object> source) {
-        return source.entrySet().stream()
-                .collect(Collectors.toMap(
-                        entry -> CaseUtils.toCamelCase(entry.getKey()),
-                        Map.Entry::getValue,
-                        (oldValue, newValue) -> oldValue, // 중복 키 발생 시 기존 값 유지
-                        java.util.LinkedHashMap::new // 순서 유지
-                ));
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        if (source == null) return result;
+
+        source.forEach((key, value) -> {
+            String camelKey = CaseUtils.toCamelCase(key);
+            result.put(camelKey, value);
+        });
+        return result;
     }
 
     private Map<String, Object> processFileResponse(SearchResultDto result, String query) {

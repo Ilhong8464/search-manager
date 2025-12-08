@@ -32,7 +32,17 @@ public class AnalyzerConfigLoader {
      * @return 동의어 목록 (각 줄이 하나의 동의어 규칙)
      */
     public List<String> loadSynonyms() {
-        return loadFromDatabase(SYNONYMS_KEY_PATH, "동의어");
+        List<String> rawSynonyms = loadFromDatabase(SYNONYMS_KEY_PATH, "동의어");
+        
+        return rawSynonyms.stream()
+                .filter(line -> {
+                    boolean isValid = line.contains(",") || line.contains("=>");
+                    if (!isValid) {
+                        log.warn("유효하지 않은 동의어 규칙 무시됨 (쉼표 또는 '=>' 없음): {}", line);
+                    }
+                    return isValid;
+                })
+                .collect(Collectors.toList());
     }
     
     /**

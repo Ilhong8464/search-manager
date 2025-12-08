@@ -39,6 +39,6 @@ async def embed_texts(request: TextsRequest):
     embeddings = model.encode(request.texts, batch_size=128, show_progress_bar=False).tolist()
     
     elapsed = time.time() - start_time
-    print(f"🚀 [Batch] {len(request.texts)}건 처리 소요 시간: {elapsed:.4f}초")
+    print(f"[Batch] {len(request.texts)}건 처리 소요 시간: {elapsed:.4f}초")
     
     return {"embeddings": embeddings}

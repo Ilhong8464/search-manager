@@ -95,8 +95,7 @@ public class IndexRegistry {
                         field("DATA_TYPE", FieldType.KEYWORD),
                         field("UUID", FieldType.KEYWORD),
                         field("TITLE", FieldType.TEXT, "nori"),
-                        field("CONTENTS", FieldType.TEXT, "nori"),
-                        field("EXTENTION", FieldType.KEYWORD)
+                        field("CONTENTS", FieldType.TEXT, "nori")
                 ))
                 .build());
 
