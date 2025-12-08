@@ -36,14 +36,14 @@ public class OpenSearchConfig {
     private int socketTimeout = 60000;
 
     @Bean
-    public OpenSearchClient openSearchClient() {
+    public RestClient restClient() {
         // REST 클라이언트 빌더 생성
         RestClientBuilder builder = RestClient.builder(
                 new HttpHost(host, port, scheme)
         );
 
         // 인증 설정
-        if (username != null && password != null) {
+        if (username != null && password != null && !username.isEmpty()) {
             BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
             credentialsProvider.setCredentials(
                     AuthScope.ANY,
@@ -62,8 +62,11 @@ public class OpenSearchConfig {
                         .setSocketTimeout(socketTimeout)
         );
 
-        RestClient restClient = builder.build();
+        return builder.build();
+    }
 
+    @Bean
+    public OpenSearchClient openSearchClient(RestClient restClient) {
         // Transport 생성
         // JacksonJsonpMapper에 JavaTimeModule 등록
         JacksonJsonpMapper jacksonJsonpMapper = new JacksonJsonpMapper(

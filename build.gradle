@@ -29,6 +29,9 @@ dependencies {
     implementation 'org.opensearch.client:opensearch-rest-client:2.11.0'
     implementation 'org.opensearch.client:opensearch-java:2.8.0'
 
+    // Spring JDBC
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+
     // MariaDB
     runtimeOnly 'org.mariadb.jdbc:mariadb-java-client:3.3.1'
 
