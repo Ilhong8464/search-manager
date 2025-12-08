@@ -148,26 +148,37 @@ public class IndexingService {
             log.info("데이터 조회 및 인덱싱 시작 (Batch Size: {})", BATCH_SIZE);
 
             while (true) {
-                // 배치 데이터 조회
+                long loopStart = System.currentTimeMillis();
+
+                // 1. 배치 데이터 조회
                 List<Map<String, Object>> batch = fetchBatchFromDatabase(definition, BATCH_SIZE, offset);
+                long afterFetch = System.currentTimeMillis();
                 
                 if (batch.isEmpty()) {
                     break;
                 }
 
-                // 1. 임베딩 생성
+                // 2. 임베딩 생성
                 enrichDocumentsWithEmbedding(definition.getIndexName(), batch);
+                long afterEmbedding = System.currentTimeMillis();
 
-                // 2. OpenSearch 인덱싱
+                // 3. OpenSearch 인덱싱
                 OpenSearchService.BulkIndexResult result = openSearchService.bulkIndex(
                         definition.getIndexName(),
                         batch
                 );
+                long afterIndex = System.currentTimeMillis();
 
                 successCount += result.successCount();
                 failCount += result.failCount();
                 totalProcessed += batch.size();
                 offset += BATCH_SIZE; // 다음 배치를 위해 오프셋 증가
+
+                log.info("구간 소요시간 - DB조회: {}ms, 임베딩: {}ms, ES색인: {}ms | 총: {}ms",
+                        (afterFetch - loopStart),
+                        (afterEmbedding - afterFetch),
+                        (afterIndex - afterEmbedding),
+                        (afterIndex - loopStart));
 
                 log.info("진행 중... 처리: {}건 | 성공: {} | 실패: {} (현재 오프셋: {})", 
                         totalProcessed, successCount, failCount, offset);
@@ -424,11 +435,14 @@ public class IndexingService {
     }
 
     private void enrichDocumentsWithEmbedding(String indexName, List<Map<String, Object>> documents) {
-         // ... (기존 로직과 동일, 다만 FieldDefinition 등 사용 불필요, Map 조작이므로 동일)
          if (vectorFieldConfig.hasVectorField(indexName) && embeddingClient.isAvailable()) {
             VectorFieldConfig.VectorField vectorField = vectorFieldConfig.getVectorField(indexName);
             String[] sourceFields = vectorField.getSourceField().split(",");
             
+            List<String> textsToEmbed = new ArrayList<>();
+            List<Map<String, Object>> docsToEmbed = new ArrayList<>();
+
+            // 1. 임베딩할 텍스트 추출 및 수집
             for (Map<String, Object> doc : documents) {
                 StringBuilder textBuilder = new StringBuilder();
                 for (String field : sourceFields) {
@@ -439,13 +453,32 @@ public class IndexingService {
                     }
                 }
                 String text = textBuilder.toString().trim();
+                
+                // 텍스트가 있는 경우만 처리 대상에 포함
                 if (!text.isEmpty()) {
-                    try {
-                        List<Double> embedding = embeddingClient.embed(text);
-                        doc.put(vectorField.getTargetField(), embedding);
-                    } catch (Exception e) {
-                        // ignore
+                    textsToEmbed.add(text);
+                    docsToEmbed.add(doc);
+                }
+            }
+
+            // 2. 배치 임베딩 요청 및 결과 매핑
+            if (!textsToEmbed.isEmpty()) {
+                try {
+                    List<List<Double>> embeddings = embeddingClient.embedBatch(textsToEmbed);
+                    
+                    if (embeddings.size() != docsToEmbed.size()) {
+                        log.warn("요청한 텍스트 수({})와 반환된 임베딩 수({})가 일치하지 않습니다.", 
+                                textsToEmbed.size(), embeddings.size());
                     }
+
+                    for (int i = 0; i < embeddings.size(); i++) {
+                        if (i < docsToEmbed.size()) {
+                            docsToEmbed.get(i).put(vectorField.getTargetField(), embeddings.get(i));
+                        }
+                    }
+                } catch (Exception e) {
+                    log.error("배치 임베딩 생성 중 오류 발생: index={}", indexName, e);
+                    // 실패 시 개별 문서는 임베딩 없이 진행됨 (또는 필요 시 재시도 로직 추가)
                 }
             }
         }
