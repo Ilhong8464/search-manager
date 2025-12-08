@@ -40,7 +40,7 @@ public class IndexingService {
     private final VectorFieldConfig vectorFieldConfig;
     private final FileIndexingService fileIndexingService;
 
-    private static final int BATCH_SIZE = 1000;
+    private static final int BATCH_SIZE = 500;
 
     /**
      * 전체 동기화 실행 (인덱스 이름으로)
@@ -124,7 +124,9 @@ public class IndexingService {
             if (!openSearchService.indexExists(definition.getIndexName())) {
                 log.info("인덱스 생성 중...");
                 openSearchService.createIndex(definition);
-            } else if ("unified".equals(definition.getIndexName())) {
+            }
+
+            if ("unified".equals(definition.getIndexName())) {
                 List<String> enabledTypes = fetchEnabledDataTypes();
                 if (enabledTypes.isEmpty()) {
                     // 모든 데이터 타입이 비활성화된 경우: unified 인덱스의 모든 데이터를 삭제
@@ -138,69 +140,141 @@ public class IndexingService {
                     log.info("비활성화된 데이터 정리 중... (활성화된 타입: {})", enabledTypes);
                     openSearchService.deleteDocumentsNotInTypes(definition.getIndexName(), "DATA_TYPE", enabledTypes);
                 }
-            }
 
-            long totalProcessed = 0;
-            long successCount = 0;
-            long failCount = 0;
-            int offset = 0;
-            
-            log.info("데이터 조회 및 인덱싱 시작 (Batch Size: {})", BATCH_SIZE);
+                long totalProcessed = 0;
+                long successCount = 0;
+                long failCount = 0;
 
-            while (true) {
-                long loopStart = System.currentTimeMillis();
+                log.info("데이터 조회 및 인덱싱 시작 (Batch Size: {})", BATCH_SIZE);
 
-                // 1. 배치 데이터 조회
-                List<Map<String, Object>> batch = fetchBatchFromDatabase(definition, BATCH_SIZE, offset);
-                long afterFetch = System.currentTimeMillis();
-                
-                if (batch.isEmpty()) {
-                    break;
+                for (String dataType : enabledTypes) {
+                    String lastId = null; // 각 데이터 타입별로 마지막 ID 추적
+                    long typeProcessed = 0;
+                    log.info("----> 데이터 타입 동기화 시작: {}", dataType);
+
+                    while (true) {
+                        long loopStart = System.currentTimeMillis();
+
+                        // 1. 배치 데이터 조회
+                        List<Map<String, Object>> batch = fetchUnifiedBatchFromDatabase(dataType, lastId, BATCH_SIZE);
+                        long afterFetch = System.currentTimeMillis();
+
+                        if (batch.isEmpty()) {
+                            break;
+                        }
+
+                        // 다음 배치를 위한 lastId 업데이트
+                        lastId = (String) batch.get(batch.size() - 1).get("UUID");
+
+                        // 2. 임베딩 생성
+                        enrichDocumentsWithEmbedding(definition.getIndexName(), batch);
+                        long afterEmbedding = System.currentTimeMillis();
+
+                        // 3. OpenSearch 인덱싱
+                        OpenSearchService.BulkIndexResult result = openSearchService.bulkIndex(
+                                definition.getIndexName(),
+                                batch
+                        );
+                        long afterIndex = System.currentTimeMillis();
+
+                        successCount += result.successCount();
+                        failCount += result.failCount();
+                        totalProcessed += batch.size();
+                        typeProcessed += batch.size();
+
+                        log.info("구간 소요시간 - DB조회: {}ms, 임베딩: {}ms, ES색인: {}ms | 총: {}ms",
+                                (afterFetch - loopStart),
+                                (afterEmbedding - afterFetch),
+                                (afterIndex - afterEmbedding),
+                                (afterIndex - loopStart));
+
+                        log.info("진행 중... 처리: {}건 (현재 타입: {} | 총: {}건 | 성공: {} | 실패: {})",
+                                typeProcessed, dataType, totalProcessed, successCount, failCount);
+                    }
+                    log.info("<---- 데이터 타입 동기화 완료: {} (총 {}건)", dataType, typeProcessed);
                 }
 
-                // 2. 임베딩 생성
-                enrichDocumentsWithEmbedding(definition.getIndexName(), batch);
-                long afterEmbedding = System.currentTimeMillis();
+                // 동기화 완료 처리
+                history.setRecordsProcessed(totalProcessed);
+                history.setRecordsSucceeded(successCount);
+                history.setRecordsFailed(failCount);
 
-                // 3. OpenSearch 인덱싱
-                OpenSearchService.BulkIndexResult result = openSearchService.bulkIndex(
-                        definition.getIndexName(),
-                        batch
-                );
-                long afterIndex = System.currentTimeMillis();
+                SyncHistory.SyncStatus status = failCount == 0
+                        ? SyncHistory.SyncStatus.SUCCESS
+                        : (successCount > 0 ? SyncHistory.SyncStatus.PARTIAL : SyncHistory.SyncStatus.FAILED);
 
-                successCount += result.successCount();
-                failCount += result.failCount();
-                totalProcessed += batch.size();
-                offset += BATCH_SIZE; // 다음 배치를 위해 오프셋 증가
+                history.complete(status, null);
+                updateLastSyncState(definition.getIndexName(), status);
 
-                log.info("구간 소요시간 - DB조회: {}ms, 임베딩: {}ms, ES색인: {}ms | 총: {}ms",
-                        (afterFetch - loopStart),
-                        (afterEmbedding - afterFetch),
-                        (afterIndex - afterEmbedding),
-                        (afterIndex - loopStart));
+                log.info("========================================");
+                log.info("동기화 완료: {}", definition.getIndexName());
+                log.info("총 처리: {}건 | 성공: {}건 | 실패: {}건 | 상태: {}",
+                        totalProcessed, successCount, failCount, status);
+                log.info("========================================");
 
-                log.info("진행 중... 처리: {}건 | 성공: {} | 실패: {} (현재 오프셋: {})", 
-                        totalProcessed, successCount, failCount, offset);
+            } else { // unified 인덱스가 아닌 경우 기존 로직 유지
+                long totalProcessed = 0;
+                long successCount = 0;
+                long failCount = 0;
+                int offset = 0;
+                
+                log.info("데이터 조회 및 인덱싱 시작 (Batch Size: {})", BATCH_SIZE);
+
+                while (true) {
+                    long loopStart = System.currentTimeMillis();
+
+                    // 1. 배치 데이터 조회
+                    List<Map<String, Object>> batch = fetchBatchFromDatabase(definition, BATCH_SIZE, offset);
+                    long afterFetch = System.currentTimeMillis();
+                    
+                    if (batch.isEmpty()) {
+                        break;
+                    }
+
+                    // 2. 임베딩 생성
+                    enrichDocumentsWithEmbedding(definition.getIndexName(), batch);
+                    long afterEmbedding = System.currentTimeMillis();
+
+                    // 3. OpenSearch 인덱싱
+                    OpenSearchService.BulkIndexResult result = openSearchService.bulkIndex(
+                            definition.getIndexName(),
+                            batch
+                    );
+                    long afterIndex = System.currentTimeMillis();
+
+                    successCount += result.successCount();
+                    failCount += result.failCount();
+                    totalProcessed += batch.size();
+                    offset += BATCH_SIZE; // 다음 배치를 위해 오프셋 증가
+
+                    log.info("구간 소요시간 - DB조회: {}ms, 임베딩: {}ms, ES색인: {}ms | 총: {}ms",
+                            (afterFetch - loopStart),
+                            (afterEmbedding - afterFetch),
+                            (afterIndex - afterEmbedding),
+                            (afterIndex - loopStart));
+
+                    log.info("진행 중... 처리: {}건 | 성공: {} | 실패: {} (현재 오프셋: {})", 
+                            totalProcessed, successCount, failCount, offset);
+                }
+
+                // 동기화 완료 처리
+                history.setRecordsProcessed(totalProcessed);
+                history.setRecordsSucceeded(successCount);
+                history.setRecordsFailed(failCount);
+
+                SyncHistory.SyncStatus status = failCount == 0
+                        ? SyncHistory.SyncStatus.SUCCESS
+                        : (successCount > 0 ? SyncHistory.SyncStatus.PARTIAL : SyncHistory.SyncStatus.FAILED);
+
+                history.complete(status, null);
+                updateLastSyncState(definition.getIndexName(), status);
+
+                log.info("========================================");
+                log.info("동기화 완료: {}", definition.getIndexName());
+                log.info("총 처리: {}건 | 성공: {}건 | 실패: {}건 | 상태: {}", 
+                        totalProcessed, successCount, failCount, status);
+                log.info("========================================");
             }
-
-            // 동기화 완료 처리
-            history.setRecordsProcessed(totalProcessed);
-            history.setRecordsSucceeded(successCount);
-            history.setRecordsFailed(failCount);
-
-            SyncHistory.SyncStatus status = failCount == 0
-                    ? SyncHistory.SyncStatus.SUCCESS
-                    : (successCount > 0 ? SyncHistory.SyncStatus.PARTIAL : SyncHistory.SyncStatus.FAILED);
-
-            history.complete(status, null);
-            updateLastSyncState(definition.getIndexName(), status);
-
-            log.info("========================================");
-            log.info("동기화 완료: {}", definition.getIndexName());
-            log.info("총 처리: {}건 | 성공: {}건 | 실패: {}건 | 상태: {}", 
-                    totalProcessed, successCount, failCount, status);
-            log.info("========================================");
 
         } catch (Exception e) {
             log.error("========================================");
@@ -432,6 +506,87 @@ public class IndexingService {
         } catch (Exception e) {
             throw new RuntimeException("단건 조회 실패", e);
         }
+    }
+
+    /**
+     * unified 인덱스를 위해 데이터 타입별로 배치 데이터 조회 (Keyset Paging)
+     * DATA_TYPE, UUID, TITLE, CONTENTS 필드만 추출
+     */
+    private List<Map<String, Object>> fetchUnifiedBatchFromDatabase(String dataType, String lastId, int limit) {
+        String sourceTable = getTableNameForDataType(dataType);
+        String idColumn = getIdColumnForDataType(dataType);
+        String titleColumn = getTitleColumnForDataType(dataType);
+        String contentsColumn = getContentsColumnForDataType(dataType);
+
+        if (sourceTable == null || idColumn == null || titleColumn == null || contentsColumn == null) {
+            log.warn("Unified 인덱스 '{}({})'의 필드 매핑이 정의되지 않았습니다. 동기화를 건너뜀.", dataType, sourceTable);
+            return Collections.emptyList();
+        }
+
+        StringBuilder sqlBuilder = new StringBuilder();
+        sqlBuilder.append(String.format("SELECT '%s' AS DATA_TYPE, %s AS UUID, %s AS TITLE, %s AS CONTENTS FROM %s",
+                dataType, idColumn, titleColumn, contentsColumn, sourceTable));
+
+        List<Object> params = new ArrayList<>();
+
+        if (lastId != null && !lastId.isEmpty()) {
+            sqlBuilder.append(String.format(" WHERE %s > ?", idColumn));
+            params.add(lastId);
+        }
+        sqlBuilder.append(String.format(" ORDER BY %s ASC LIMIT ?", idColumn));
+        params.add(limit);
+
+        String sql = sqlBuilder.toString();
+        
+        try {
+            return jdbcTemplate.query(sql, (rs, rowNum) -> {
+                Map<String, Object> document = new HashMap<>();
+                document.put("DATA_TYPE", rs.getString("DATA_TYPE"));
+                document.put("UUID", rs.getString("UUID"));
+                document.put("TITLE", rs.getString("TITLE"));
+                document.put("CONTENTS", rs.getString("CONTENTS"));
+                document.put("id", rs.getString("UUID")); // OpenSearch _id 필드에 매핑
+                return document;
+            }, params.toArray());
+        } catch (Exception e) {
+            log.error("Unified 인덱스 '{}' 데이터 조회 실패 (lastId: {}): {}", dataType, lastId, e.getMessage(), e);
+            throw new RuntimeException("Unified 인덱스 데이터 조회 실패", e);
+        }
+    }
+
+    private String getTableNameForDataType(String dataType) {
+        return switch (dataType) {
+            case "CALL" -> "uvw_call";
+            case "MANUAL" -> "uvw_manual";
+            case "NOTICE" -> "tb_doc"; // uvw_doc_notice가 존재하지 않으므로 tb_doc 직접 사용
+            default -> null;
+        };
+    }
+
+    private String getIdColumnForDataType(String dataType) {
+        return switch (dataType) {
+            case "CALL" -> "CALL_UUID";
+            case "MANUAL" -> "MANUAL_UUID";
+            case "NOTICE" -> "DOC_UUID";
+            default -> null;
+        };
+    }
+
+    private String getTitleColumnForDataType(String dataType) {
+        return switch (dataType) {
+            case "CALL" -> "QUESTION";
+            case "MANUAL" -> "TITLE";
+            case "NOTICE" -> "DOC_NM";
+            default -> null;
+        };
+    }
+
+    private String getContentsColumnForDataType(String dataType) {
+        return switch (dataType) {
+            case "CALL" -> "ANSWER";
+            case "MANUAL", "NOTICE" -> "CONTENTS";
+            default -> null;
+        };
     }
 
     private void enrichDocumentsWithEmbedding(String indexName, List<Map<String, Object>> documents) {
