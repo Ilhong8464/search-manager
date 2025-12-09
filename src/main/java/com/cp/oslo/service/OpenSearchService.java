@@ -27,6 +27,7 @@ import org.opensearch.client.opensearch.core.SearchRequest; // SearchRequest imp
 import org.opensearch.client.opensearch._types.query_dsl.Operator; // Operator import
 import org.opensearch.client.opensearch.core.DeleteByQueryRequest; // DeleteByQueryRequest import
 import org.opensearch.client.opensearch._types.FieldValue; // FieldValue import
+import org.opensearch.client.json.JsonData;
 
 
 /**
@@ -103,8 +104,10 @@ public class OpenSearchService {
             );
 
             // 인덱스 설정 생성 (analyzer 포함)
+            // 680만 건(unified) 기준 샤드 5개 권장 (병렬 처리 최적화)
+            int shards = "unified".equals(definition.getIndexName()) ? 5 : 1;
             IndexSettings indexSettings = createIndexSettings(
-                    1, // 기본값 하드코딩 또는 definition에 추가 가능
+                    shards, 
                     1, // 기본값 하드코딩
                     definition
             );
@@ -840,7 +843,16 @@ public class OpenSearchService {
             case KNN_VECTOR -> Property.of(p -> p.knnVector(knn -> {
                 int dimension = field.getDimension() != null ? field.getDimension() : 768;
                 return knn.dimension(dimension)
-                          .method(method -> method.name("hnsw").spaceType("cosinesimil").engine("lucene"));
+                          .method(method -> method
+                              .name("hnsw")
+                              .engine("faiss") // 엔진을 lucene -> faiss로 변경
+                              .spaceType("innerproduct") // 코사인 유사도는 faiss에서 innerproduct 권장 (정규화된 벡터 가정)
+                              .parameters(Map.of(
+                                  "m", JsonData.of(16),
+                                  "ef_construction", JsonData.of(128),
+                                  "encoder", JsonData.of(Map.of("name", "sqfp16"))
+                              ))
+                          );
             }));
             case NESTED -> Property.of(p -> p.nested(n -> {
                 if (field.getSubFields() != null) {
