@@ -121,25 +121,30 @@ public class IndexingService {
 
         try {
             // 인덱스가 없으면 생성
+            boolean isNewIndex = false;
+            
+            // unified 인덱스의 경우 항상 삭제 후 재생성 (Hard Reset)하여 Clean 상태 유지
+            if ("unified".equals(definition.getIndexName()) && openSearchService.indexExists(definition.getIndexName())) {
+                log.info("unified 인덱스 초기화(삭제 후 재생성) 진행...");
+                openSearchService.deleteIndex(definition.getIndexName());
+            }
+
             if (!openSearchService.indexExists(definition.getIndexName())) {
                 log.info("인덱스 생성 중...");
                 openSearchService.createIndex(definition);
+                isNewIndex = true;
             }
 
             if ("unified".equals(definition.getIndexName())) {
                 List<String> enabledTypes = fetchEnabledDataTypes();
                 if (enabledTypes.isEmpty()) {
-                    // 모든 데이터 타입이 비활성화된 경우: unified 인덱스의 모든 데이터를 삭제
-                    log.info("모든 데이터 타입이 비활성화되어, unified 인덱스의 모든 데이터를 삭제합니다.");
-                    // 인덱스가 존재하면 삭제 후 재생성 (이렇게 하면 인덱스가 비워짐)
-                    if (openSearchService.indexExists(definition.getIndexName())) {
-                        openSearchService.deleteIndex(definition.getIndexName());
-                        openSearchService.createIndex(definition); // 빈 인덱스 재생성
-                    }
-                } else {
-                    log.info("비활성화된 데이터 정리 중... (활성화된 타입: {})", enabledTypes);
-                    openSearchService.deleteDocumentsNotInTypes(definition.getIndexName(), "DATA_TYPE", enabledTypes);
+                    log.info("모든 데이터 타입이 비활성화되어, 동기화를 중단합니다.");
+                    return history; // 빈 상태로 종료
                 }
+                
+                // Hard Reset 전략을 사용하므로 deleteDocumentsNotInTypes 호출 불필요
+                // (항상 새 인덱스이므로 비활성 데이터가 존재할 수 없음)
+                log.info("활성화된 타입에 대해 동기화를 시작합니다. (타입: {})", enabledTypes);
 
                 long totalProcessed = 0;
                 long successCount = 0;
@@ -558,7 +563,7 @@ public class IndexingService {
         return switch (dataType) {
             case "CALL" -> "uvw_call";
             case "MANUAL" -> "uvw_manual";
-            case "NOTICE" -> "tb_doc"; // uvw_doc_notice가 존재하지 않으므로 tb_doc 직접 사용
+            case "NOTICE" -> "uvw_doc_notice";
             default -> null;
         };
     }
