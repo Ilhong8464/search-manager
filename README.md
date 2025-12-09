@@ -66,6 +66,15 @@ docker run -d \
   -e "DISABLE_SECURITY_PLUGIN=true" \
   -e "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" \
   custom-opensearch:3.3.2
+  
+# 3. 또는 OpenSearch를 그냥 pull 해서 nori 플러그인 설치 후 실행합니다.(간단)
+# 3.3.2 버전 풀
+docker pull opensearchproject/opensearch:3.3.2
+
+# nori 플러그인 설치
+docker exec -it opensearch-node ./bin/opensearch-plugin install analysis-nori
+
+# 이 후 2번의 docker run으로 실행
 ```
 
 ### 4. Embedding Service 실행
