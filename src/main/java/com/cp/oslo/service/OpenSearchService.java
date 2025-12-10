@@ -849,8 +849,7 @@ public class OpenSearchService {
                               .spaceType("innerproduct") // 코사인 유사도는 faiss에서 innerproduct 권장 (정규화된 벡터 가정)
                               .parameters(Map.of(
                                   "m", JsonData.of(16),
-                                  "ef_construction", JsonData.of(128),
-                                  "encoder", JsonData.of(Map.of("name", "sqfp16"))
+                                  "ef_construction", JsonData.of(128)
                               ))
                           );
             }));
