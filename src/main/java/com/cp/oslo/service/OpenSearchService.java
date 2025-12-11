@@ -466,6 +466,27 @@ public class OpenSearchService {
                                                     .boost((float) finalTextScore)
                                             )
                                     )
+                                    // 구문(Phrase)이 일치하는 문서에 가중치 부여 (10배)
+                                    .should(sh -> sh
+                                            .bool(b2 -> b2
+                                                    .should(s -> s
+                                                            .matchPhrase(mp -> mp
+                                                                    .field("TITLE")
+                                                                    .query(queryText)
+                                                                    .slop(2) // 단어 사이 간격 허용
+                                                                    .boost((float) finalTextScore * 3.0f)
+                                                            )
+                                                    )
+                                                    .should(s -> s
+                                                            .matchPhrase(mp -> mp
+                                                                    .field("CONTENTS")
+                                                                    .query(queryText)
+                                                                    .slop(2)
+                                                                    .boost((float) finalTextScore * 3.0f)
+                                                            )
+                                                    )
+                                            )
+                                    )
                                     .should(sh -> sh
                                             .knn(knn -> knn
                                                     .field(vectorFieldName)
