@@ -39,8 +39,12 @@ public class SearchController {
             @PathVariable String indexName,
             @RequestParam(required = false, defaultValue = "*") String query,
             @RequestParam(required = false, defaultValue = "OR") String operator,
-            @RequestParam(required = false, defaultValue = "10") Integer size) {
+            @RequestParam(required = false) Integer size) {
         
+        if (size == null) {
+            size = analyzerConfigLoader.loadSearchSize();
+        }
+
         log.info("검색 요청: index={}, query={}, operator={}, size={}", indexName, query, operator, size);
 
         if (operator != null && !operator.equalsIgnoreCase("AND") && !operator.equalsIgnoreCase("OR")) {
