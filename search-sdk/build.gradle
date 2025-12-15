@@ -1,0 +1,54 @@
+plugins {
+    id 'java'
+    id 'maven-publish'
+}
+
+group = 'com.cp'
+version = '0.1.1'   // ← gms-biz 측에서 쓸 버전
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.spring.io/milestone' }
+}
+
+dependencies {
+    implementation 'com.konghq:unirest-java:3.14.5'
+    implementation 'org.slf4j:slf4j-api:2.0.16'
+    compileOnly 'org.projectlombok:lombok:1.18.34'
+    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+}
+
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+
+            groupId = project.group          // com.cp
+            artifactId = 'search-engine-sdk' // ★ 폴더 이름 상관없이 명시적으로!
+            version = project.version        // 0.1
+        }
+    }
+
+    repositories {
+        maven {
+            name = "centerlink"
+            url = project.version.toString().endsWith('-SNAPSHOT') ?
+                    "https://062.centerlink.kr:5000/repository/maven-snapshots/" :
+                    "https://062.centerlink.kr:5000/repository/maven-releases/"
+            allowInsecureProtocol = true
+
+            credentials {
+                username = project.findProperty("nexusUsername")
+                password = project.findProperty("nexusPassword")
+            }
+        }
+    }
+}
