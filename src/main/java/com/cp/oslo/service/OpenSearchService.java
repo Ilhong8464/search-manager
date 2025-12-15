@@ -312,15 +312,31 @@ public class OpenSearchService {
                     .index(indexName)
                     .size(resultSize)
                     .query(q -> q
-                            .multiMatch(m -> m
-                                    .fields(targetFields)
-                                    .query(query)
-                                    .operator("AND".equalsIgnoreCase(defaultOperator)
-                                            ? Operator.And
-                                            : Operator.Or
+                            .bool(b -> {
+                                b.must(must -> must
+                                    .multiMatch(m -> m
+                                            .fields(targetFields)
+                                            .query(query)
+                                            .operator("AND".equalsIgnoreCase(defaultOperator)
+                                                    ? Operator.And
+                                                    : Operator.Or
+                                            )
+                                            .type(org.opensearch.client.opensearch._types.query_dsl.TextQueryType.CrossFields)
                                     )
-                                    .type(org.opensearch.client.opensearch._types.query_dsl.TextQueryType.CrossFields)
-                            )
+                                );
+                                
+                                // unified 인덱스인 경우 MANUAL 데이터 타입에 가중치 부여
+                                if ("unified".equals(indexName)) {
+                                    b.should(s -> s
+                                        .term(t -> t
+                                            .field("DATA_TYPE")
+                                            .value(FieldValue.of("MANUAL"))
+                                            .boost(3.0f)
+                                        )
+                                    );
+                                }
+                                return b;
+                            })
                     );
 
             // manual 인덱스에만 하이라이팅 적용
@@ -493,6 +509,14 @@ public class OpenSearchService {
                                                     .vector(vectorArray)
                                                     .k(finalSize)
                                                     .boost((float) finalVectorScore)
+                                            )
+                                    )
+                                    // MANUAL 데이터 타입에 가중치 부여
+                                    .should(sh -> sh
+                                            .term(t -> t
+                                                    .field("DATA_TYPE")
+                                                    .value(FieldValue.of("MANUAL"))
+                                                    .boost((float) finalTextScore * 3.0f)
                                             )
                                     )
                             )
