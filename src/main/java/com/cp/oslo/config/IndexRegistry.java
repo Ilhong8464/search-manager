@@ -5,6 +5,7 @@ import com.cp.oslo.model.IndexDefinition;
 import com.cp.oslo.model.FieldDefinition.FieldType;
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;
+import lombok.RequiredArgsConstructor; // Import added
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -16,8 +17,10 @@ import java.util.Map;
  * 코드 레벨에서 인덱스 구조(필드 매핑 등)를 관리합니다.
  */
 @Component
+@RequiredArgsConstructor // Annotation added
 public class IndexRegistry {
 
+    private final VectorFieldConfig vectorFieldConfig; // Dependency injection
     @Getter
     private final Map<String, IndexDefinition> definitions = new HashMap<>();
 
@@ -100,6 +103,7 @@ public class IndexRegistry {
                 .build());
 
         // 6. File 인덱스 정의
+        int fileDimension = vectorFieldConfig.getVectorField("file") != null ? vectorFieldConfig.getVectorField("file").getDimension() : 1024;
         definitions.put("file", IndexDefinition.builder()
                 .indexName("file")
                 .sourceTableName("TB_FILE")
@@ -122,7 +126,7 @@ public class IndexRegistry {
                                         FieldDefinition.builder()
                                                 .targetField("embedding")
                                                 .type(FieldType.KNN_VECTOR)
-                                                .dimension(768)
+                                                .dimension(fileDimension)
                                                 .indexed(true)
                                                 .build()
                                 ))

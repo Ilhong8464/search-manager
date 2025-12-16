@@ -33,10 +33,18 @@ async def embed_text(request: TextRequest):
 async def embed_texts(request: TextsRequest):
     import time
     start_time = time.time()
-    
+
+    safe_batch_size = 32
+
+
     # batch_size를 요청 크기에 맞추거나 고정값 사용 (메모리에 따라 조정)
     # convert_to_tensor=False -> numpy array 반환 (JSON 직렬화 위해 list 변환 필요하므로 tensor 불필요)
-    embeddings = model.encode(request.texts, batch_size=128, show_progress_bar=False).tolist()
+    embeddings = model.encode(
+        request.texts,
+        batch_size=safe_batch_size,
+        show_progress_bar=False,
+        normalize_embeddings=True # 검색용이라면 정규화 추천
+    ).tolist()
     
     elapsed = time.time() - start_time
     print(f"[Batch] {len(request.texts)}건 처리 소요 시간: {elapsed:.4f}초")

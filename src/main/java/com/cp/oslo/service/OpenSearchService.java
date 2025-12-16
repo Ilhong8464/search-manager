@@ -16,7 +16,9 @@ import org.opensearch.client.opensearch.indices.CreateIndexRequest;
 import org.opensearch.client.opensearch.indices.DeleteIndexRequest;
 import org.opensearch.client.opensearch.indices.ExistsRequest;
 import org.opensearch.client.opensearch.indices.IndexSettings;
+import org.opensearch.client.json.JsonData;
 import org.springframework.stereotype.Service;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Map; // Map import 추가
 import java.util.HashMap; // HashMap import 추가
@@ -260,15 +262,28 @@ public class OpenSearchService {
                 docId = document.get("uuid").toString();
             }
 
-            final String finalDocId = docId;
+            // Jackson ObjectMapper로 JSON 문자열로 직렬화
+            ObjectMapper objectMapper = new ObjectMapper();
+            // Java 8 날짜/시간 타입 지원 추가
+            objectMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+            String jsonString = objectMapper.writeValueAsString(document);
 
-            openSearchClient.index(i -> i
-                    .index(indexName)
-                    .id(finalDocId)
-                    .document(document)
-            );
+            // RestClient를 직접 사용하여 JSON 문자열 전송
+            org.opensearch.client.transport.rest_client.RestClientTransport transport =
+                (org.opensearch.client.transport.rest_client.RestClientTransport) openSearchClient._transport();
+            org.opensearch.client.transport.OpenSearchTransport rawTransport = transport;
 
-            return true;
+            String endpoint = "/" + indexName + "/_doc" + (docId != null ? "/" + docId : "");
+            org.apache.http.HttpEntity entity = new org.apache.http.nio.entity.NStringEntity(
+                jsonString, org.apache.http.entity.ContentType.APPLICATION_JSON);
+
+            org.opensearch.client.Request request = new org.opensearch.client.Request("POST", endpoint);
+            request.setEntity(entity);
+
+            org.opensearch.client.Response response = transport.restClient().performRequest(request);
+
+            return response.getStatusLine().getStatusCode() == 200 ||
+                   response.getStatusLine().getStatusCode() == 201;
         } catch (Exception e) {
             log.error("문서 인덱싱 실패: index={}, doc={}", indexName, document, e);
             throw new RuntimeException("문서 인덱싱 실패", e);
@@ -323,7 +338,9 @@ public class OpenSearchService {
                                                     : Operator.Or
                                             )
                                             .type(org.opensearch.client.opensearch._types.query_dsl.TextQueryType.CrossFields)
-                                            .minimumShouldMatch("AND".equalsIgnoreCase(defaultOperator) ? null : "2<70%")
+                                            .minimumShouldMatch("AND".equalsIgnoreCase(defaultOperator) ? null : 
+                                                (!query.trim().contains(" ") ? "2<100%" : null)
+                                            )
                                     )
                                 );
                                 
@@ -923,7 +940,7 @@ public class OpenSearchService {
             case BOOLEAN -> Property.of(p -> p.boolean_(b -> b));
             case DATE -> Property.of(p -> p.date(d -> d));
             case KNN_VECTOR -> Property.of(p -> p.knnVector(knn -> {
-                int dimension = field.getDimension() != null ? field.getDimension() : 768;
+                int dimension = field.getDimension() != null ? field.getDimension() : 1024;
                 return knn.dimension(dimension)
                           .method(method -> method
                               .name("hnsw")
