@@ -23,6 +23,7 @@ import java.util.HashMap; // HashMap import 추가
 import java.util.stream.Collectors; // Collectors import 추가
 import java.util.List; // List import 추가
 import com.cp.oslo.dto.SearchResultDto; // SearchResultDto import
+import org.opensearch.client.opensearch.core.search.BuiltinHighlighterType;
 import org.opensearch.client.opensearch.core.SearchRequest; // SearchRequest import
 import org.opensearch.client.opensearch._types.query_dsl.Operator; // Operator import
 import org.opensearch.client.opensearch.core.DeleteByQueryRequest; // DeleteByQueryRequest import
@@ -322,6 +323,7 @@ public class OpenSearchService {
                                                     : Operator.Or
                                             )
                                             .type(org.opensearch.client.opensearch._types.query_dsl.TextQueryType.CrossFields)
+                                            .minimumShouldMatch("AND".equalsIgnoreCase(defaultOperator) ? null : "2<70%")
                                     )
                                 );
                                 
@@ -343,22 +345,43 @@ public class OpenSearchService {
             if ("manual".equals(indexName)) {
                 searchRequestBuilder.highlight(h -> h
                         .fields("TITLE", f -> f
+                                .type(t -> t.builtin(BuiltinHighlighterType.Unified))
                                 .preTags("<b>")
                                 .postTags("</b>")
                                 .fragmentSize(100)
                                 .numberOfFragments(1)
+                                .highlightQuery(hq -> hq.bool(b -> {
+                                    for (String token : query.split("\\s+")) {
+                                        b.should(s -> s.matchPhrase(mp -> mp.field("TITLE").query(token)));
+                                    }
+                                    return b;
+                                }))
                         )
                         .fields("CONTENTS", f -> f
+                                .type(t -> t.builtin(BuiltinHighlighterType.Unified))
                                 .preTags("<b>")
                                 .postTags("</b>")
                                 .fragmentSize(100)
                                 .numberOfFragments(1)
+                                .highlightQuery(hq -> hq.bool(b -> {
+                                    for (String token : query.split("\\s+")) {
+                                        b.should(s -> s.matchPhrase(mp -> mp.field("CONTENTS").query(token)));
+                                    }
+                                    return b;
+                                }))
                         )
                         .fields("CAT_NM", f -> f // CAT_NM 필드도 하이라이팅에 포함
+                                .type(t -> t.builtin(BuiltinHighlighterType.Unified))
                                 .preTags("<b>")
                                 .postTags("</b>")
                                 .fragmentSize(100)
                                 .numberOfFragments(1)
+                                .highlightQuery(hq -> hq.bool(b -> {
+                                    for (String token : query.split("\\s+")) {
+                                        b.should(s -> s.matchPhrase(mp -> mp.field("CAT_NM").query(token)));
+                                    }
+                                    return b;
+                                }))
                         )
                 );
             }
@@ -367,16 +390,30 @@ public class OpenSearchService {
             if ("unified".equals(indexName)) {
                 searchRequestBuilder.highlight(h -> h
                         .fields("TITLE", f -> f
+                                .type(t -> t.builtin(BuiltinHighlighterType.Unified))
                                 .preTags("<b>")
                                 .postTags("</b>")
                                 .fragmentSize(100)
                                 .numberOfFragments(1)
+                                .highlightQuery(hq -> hq.bool(b -> {
+                                    for (String token : query.split("\\s+")) {
+                                        b.should(s -> s.matchPhrase(mp -> mp.field("TITLE").query(token)));
+                                    }
+                                    return b;
+                                }))
                         )
                         .fields("CONTENTS", f -> f
+                                .type(t -> t.builtin(BuiltinHighlighterType.Unified))
                                 .preTags("<b>")
                                 .postTags("</b>")
                                 .fragmentSize(100)
                                 .numberOfFragments(1)
+                                .highlightQuery(hq -> hq.bool(b -> {
+                                    for (String token : query.split("\\s+")) {
+                                        b.should(s -> s.matchPhrase(mp -> mp.field("CONTENTS").query(token)));
+                                    }
+                                    return b;
+                                }))
                         )
                 );
             }

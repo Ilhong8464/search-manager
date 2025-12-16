@@ -249,6 +249,8 @@ public class SearchController {
     }
 
     private Map<String, Object> processFileResponse(SearchResultDto result, String query) {
+        Map<String, Map<String, List<String>>> highlightsMap = result.getHighlights();
+
         List<Map<String, Object>> processedDocuments = result.getDocuments().stream()
                 .map(doc -> {
                     Map<String, Object> newDoc = new HashMap<>();
@@ -258,20 +260,38 @@ public class SearchController {
                     if (doc.containsKey("_score")) {
                         newDoc.put("score", doc.get("_score"));
                     }
-                    
-                    Object paragraphsObj = doc.get("paragraphs");
-                    if (paragraphsObj instanceof List) {
-                        List<?> paragraphs = (List<?>) paragraphsObj;
-                        List<String> contents = paragraphs.stream()
-                                .map(p -> {
-                                    if (p instanceof Map) {
-                                        return (String) ((Map<?, ?>) p).get("content");
-                                    }
-                                    return null;
-                                })
-                                .filter(s -> s != null)
-                                .collect(Collectors.toList());
-                        newDoc.put("content", contents);
+
+                    // 하이라이트 적용 로직
+                    String docId = doc.get("_id") != null ? doc.get("_id").toString() : null;
+                    List<String> highlightedContents = null;
+
+                    if (docId != null && highlightsMap != null && highlightsMap.containsKey(docId)) {
+                        Map<String, List<String>> docHighlights = highlightsMap.get(docId);
+                        // paragraphs.content 필드의 하이라이트 가져오기
+                        if (docHighlights.containsKey("paragraphs.content")) {
+                            highlightedContents = docHighlights.get("paragraphs.content");
+                        }
+                    }
+
+                    if (highlightedContents != null && !highlightedContents.isEmpty()) {
+                        // 하이라이트가 있으면 그것을 content로 사용
+                        newDoc.put("content", highlightedContents);
+                    } else {
+                        // 하이라이트가 없으면 원본 paragraphs에서 content 추출
+                        Object paragraphsObj = doc.get("paragraphs");
+                        if (paragraphsObj instanceof List) {
+                            List<?> paragraphs = (List<?>) paragraphsObj;
+                            List<String> contents = paragraphs.stream()
+                                    .map(p -> {
+                                        if (p instanceof Map) {
+                                            return (String) ((Map<?, ?>) p).get("content");
+                                        }
+                                        return null;
+                                    })
+                                    .filter(s -> s != null)
+                                    .collect(Collectors.toList());
+                            newDoc.put("content", contents);
+                        }
                     }
                     
                     return newDoc;
