@@ -74,6 +74,7 @@ logging:
 
 # 임베딩 서비스 설정
 embedding:
+  dimension: 1024 # 전역 벡터 차원 설정
   service:
     url: '${EMBEDDING_URL}:${EMBEDDING_PORT}'
   # 각 인덱스별 벡터 필드 설정
@@ -81,31 +82,31 @@ embedding:
     manual:
       source-field: TITLE,CONTENTS  # 임베딩을 생성할 원본 필드 (쉼표로 구분하여 여러 필드 지정 가능)
       target-field: embedding       # 벡터가 저장될 필드
-      dimension: 768                # 벡터 차원
       engine: lucene                # k-NN 엔진 (lucene, nmslib, faiss)
       space-type: cosinesimil       # 거리 측정 (cosinesimil, l2, innerproduct)
     manual-qna:
       source-field: TITLE,CONTENTS  # title과 contents를 합쳐서 임베딩 생성
       target-field: embedding
-      dimension: 768
       engine: lucene
       space-type: cosinesimil
     call:
       source-field: QUESTION,ANSWER  # question과 answer를 합쳐서 임베딩 생성
       target-field: embedding
-      dimension: 768
       engine: lucene
       space-type: cosinesimil
     notice:
       source-field: DOC_NM,CONTENTS  # doc_nm과 contents를 합쳐서 임베딩 생성
       target-field: embedding
-      dimension: 768
       engine: lucene
       space-type: cosinesimil
     unified:
       source-field: TITLE,CONTENTS
       target-field: embedding
-      dimension: 768
+      engine: lucene
+      space-type: cosinesimil
+    file:
+      source-field: paragraphs.content
+      target-field: paragraphs.embedding
       engine: lucene
       space-type: cosinesimil
 

@@ -152,7 +152,30 @@ public class FileIndexingService {
         List<String> chunks = chunkText(content, 1000, 200); // 1000자 청크, 200자 오버랩
 
         // 4. Embedding (Batch)
-        List<List<Double>> embeddings = embeddingClient.embedBatch(chunks);
+        List<List<Double>> allEmbeddings = new ArrayList<>();
+        int batchSize = 50; // 임베딩 서비스에 한 번에 보낼 청크 개수
+        
+        for (int i = 0; i < chunks.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, chunks.size());
+            List<String> subChunks = chunks.subList(i, end);
+            
+            log.debug("배치 임베딩 요청: {} / {} (청크 {} ~ {})", i / batchSize + 1, (chunks.size() + batchSize - 1) / batchSize, i, end -1);
+            List<List<Double>> subEmbeddings = embeddingClient.embedBatch(subChunks);
+
+            if (subEmbeddings == null || subEmbeddings.size() != subChunks.size()) {
+                // 서브 배치 임베딩 실패 시 전체 인덱싱 중단 또는 해당 파일 인덱싱 건너뛰기
+                log.error("서브 배치 임베딩 결과 개수 불일치: chunks={}, embeddings={}", subChunks.size(), (subEmbeddings != null ? subEmbeddings.size() : "null"));
+                throw new RuntimeException(String.format("임베딩 생성 결과가 청크 개수와 일치하지 않습니다. (파일 ID: %s)", file.getFileId()));
+            }
+            allEmbeddings.addAll(subEmbeddings);
+        }
+
+        // 전체 임베딩 개수 검증 (chunking 후 결과가 0개인 경우 대비)
+        if (allEmbeddings.size() != chunks.size()) {
+            log.error("최종 임베딩 개수 불일치: chunks={}, allEmbeddings={}", chunks.size(), allEmbeddings.size());
+            throw new RuntimeException(String.format("최종 임베딩 생성 결과가 청크 개수와 일치하지 않습니다. (파일 ID: %s)", file.getFileId()));
+        }
+        List<List<Double>> embeddings = allEmbeddings; // 변수명 일치
 
         // 5. Build Document
         Map<String, Object> doc = new HashMap<>();
@@ -166,14 +189,40 @@ public class FileIndexingService {
 
         List<Map<String, Object>> paragraphs = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
+            List<Double> embedding = embeddings.get(i);
+
+            // embedding 유효성 검사
+            boolean isValid = embedding != null && !embedding.isEmpty();
+            if (isValid) {
+                for (Double val : embedding) {
+                    if (val == null) {
+                        isValid = false;
+                        break;
+                    }
+                }
+            }
+
+            // 유효하지 않은 embedding이 있는 청크는 아예 추가하지 않음
+            if (!isValid) {
+                log.warn("청크 {}의 임베딩이 유효하지 않습니다 (null 또는 비어있음). 해당 청크를 건너뜁니다.", i);
+                continue;
+            }
+
+            // 유효한 경우에만 paragraph 추가
             Map<String, Object> p = new HashMap<>();
             p.put("content", chunks.get(i));
-            if (i < embeddings.size()) {
-                p.put("embedding", embeddings.get(i));
-            }
+            p.put("embedding", embedding);
             paragraphs.add(p);
         }
+
+        // 유효한 paragraph가 하나도 없으면 오류 처리
+        if (paragraphs.isEmpty()) {
+            log.error("파일 {}에 대한 유효한 임베딩이 생성되지 않았습니다", file.getFileId());
+            throw new RuntimeException("유효한 임베딩이 생성되지 않았습니다.");
+        }
         doc.put("paragraphs", paragraphs);
+
+
 
         // 6. Index
         openSearchService.indexDocument("file", doc);
