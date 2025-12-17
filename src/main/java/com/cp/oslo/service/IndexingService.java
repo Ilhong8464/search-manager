@@ -454,7 +454,15 @@ public class IndexingService {
             // 문서 ID 설정
             document.put("id", uuid);
 
-            enrichDocumentsWithEmbedding(indexName, Collections.singletonList(document));
+            List<Map<String, Object>> docList = new ArrayList<>();
+            docList.add(document);
+            enrichDocumentsWithEmbedding(indexName, docList);
+
+            if (docList.isEmpty()) {
+                log.warn("임베딩 생성 실패 또는 벡터 필드 누락으로 인해 단건 동기화를 건너뜁니다: index={}, uuid={}", indexName, uuid);
+                return;
+            }
+
             openSearchService.indexDocument(indexName, document);
             log.info("단건 동기화 완료: index={}, uuid={}", indexName, uuid);
 
