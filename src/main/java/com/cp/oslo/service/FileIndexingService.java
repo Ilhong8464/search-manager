@@ -69,7 +69,9 @@ public class FileIndexingService {
         log.info("파일 전체 인덱싱 시작");
 
         // 1. 인덱스 생성 (없으면)
-        if (!openSearchService.indexExists("file")) {
+        boolean indexExists = openSearchService.indexExists("file");
+        log.debug("인덱스 'file' 존재 여부: {}", indexExists);
+        if (!indexExists) {
             openSearchService.createIndex(indexRegistry.get("file"));
         }
 

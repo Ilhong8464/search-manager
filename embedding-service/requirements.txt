@@ -8,6 +8,7 @@ torch>=2.6.0
 transformers>=4.35.0
 sentence-transformers>=2.2.2
 huggingface_hub>=0.17.3
+FlagEmbedding>=1.2.0
 
 # SSL 경고 해결
 urllib3>=1.26.18

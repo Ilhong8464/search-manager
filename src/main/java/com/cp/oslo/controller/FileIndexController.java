@@ -43,6 +43,12 @@ public class FileIndexController {
         return ResponseEntity.ok(Map.of("message", "파일 인덱스 삭제 완료", "deleted", deleted));
     }
 
+    @DeleteMapping("/{uuid}") // UUID를 PathVariable로 받음
+    public ResponseEntity<?> deleteFileDocument(@PathVariable String uuid) {
+        indexingService.deleteDocument("file", uuid); // IndexingService의 deleteDocument 호출
+        return ResponseEntity.ok(Map.of("message", "파일 문서 삭제 완료", "uuid", uuid));
+    }
+
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(
             @RequestParam String query,

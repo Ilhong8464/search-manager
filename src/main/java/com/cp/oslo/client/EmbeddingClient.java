@@ -127,6 +127,36 @@ public class EmbeddingClient {
     }
 
     /**
+     * 리랭킹 요청 (쿼리 + 문서 리스트 -> 점수 및 정렬된 인덱스 반환)
+     */
+    public Map<String, Object> rerank(String query, List<String> documents) {
+        try {
+            Map<String, Object> request = Map.of(
+                    "query", query,
+                    "documents", documents
+            );
+
+            log.debug("리랭킹 요청: query={}, docs={}", query, documents.size());
+
+            Map<String, Object> response = webClient.post()
+                    .uri("/rerank")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .block();
+
+            if (response == null) {
+                throw new RuntimeException("리랭킹 서비스 응답이 null입니다");
+            }
+            return response;
+
+        } catch (Exception e) {
+            log.error("리랭킹 요청 실패", e);
+            throw new RuntimeException("리랭킹 요청 실패", e);
+        }
+    }
+
+    /**
      * 임베딩 서비스 연결 확인
      */
     public boolean isAvailable() {
