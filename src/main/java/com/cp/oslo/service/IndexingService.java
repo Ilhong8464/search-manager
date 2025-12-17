@@ -641,6 +641,12 @@ public class IndexingService {
                     // 실패 시 개별 문서는 임베딩 없이 진행됨 (또는 필요 시 재시도 로직 추가)
                 }
             }
+            
+            // 임베딩 필드가 누락된 문서 제거 (OpenSearch 인덱싱 오류 방지)
+            if (vectorFieldConfig.hasVectorField(indexName)) {
+                // 이미 상단에 vectorField가 선언되어 있으므로 재사용
+                documents.removeIf(doc -> !doc.containsKey(vectorField.getTargetField()) || doc.get(vectorField.getTargetField()) == null);
+            }
         }
     }
 
@@ -678,6 +684,11 @@ public class IndexingService {
                     // 1. 인덱스 삭제
                     if (openSearchService.indexExists(indexName)) {
                         openSearchService.deleteIndex(indexName);
+                        try {
+                            Thread.sleep(1000); // 인덱스 삭제 후 OpenSearch 상태 반영 대기
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
                     }
                     
                     // 2. 인덱스 동기화 (생성 및 데이터 주입)

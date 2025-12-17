@@ -4,6 +4,7 @@ import com.cp.oslo.config.VectorFieldConfig;
 import com.cp.oslo.model.FieldDefinition;
 import com.cp.oslo.model.IndexDefinition;
 import com.cp.oslo.util.AnalyzerConfigLoader;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.opensearch.client.opensearch.OpenSearchClient;
@@ -18,20 +19,17 @@ import org.opensearch.client.opensearch.indices.ExistsRequest;
 import org.opensearch.client.opensearch.indices.IndexSettings;
 import org.opensearch.client.json.JsonData;
 import org.springframework.stereotype.Service;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.Map; // Map import 추가
-import java.util.HashMap; // HashMap import 추가
-import java.util.stream.Collectors; // Collectors import 추가
-import java.util.List; // List import 추가
-import com.cp.oslo.dto.SearchResultDto; // SearchResultDto import
+import java.util.Map;
+import java.util.HashMap;
+import java.util.stream.Collectors;
+import java.util.List;
+import com.cp.oslo.dto.SearchResultDto;
 import org.opensearch.client.opensearch.core.search.BuiltinHighlighterType;
-import org.opensearch.client.opensearch.core.SearchRequest; // SearchRequest import
-import org.opensearch.client.opensearch._types.query_dsl.Operator; // Operator import
-import org.opensearch.client.opensearch.core.DeleteByQueryRequest; // DeleteByQueryRequest import
-import org.opensearch.client.opensearch._types.FieldValue; // FieldValue import
-import org.opensearch.client.json.JsonData;
-
+import org.opensearch.client.opensearch.core.SearchRequest;
+import org.opensearch.client.opensearch._types.query_dsl.Operator;
+import org.opensearch.client.opensearch.core.DeleteByQueryRequest;
+import org.opensearch.client.opensearch._types.FieldValue;
 
 /**
  * OpenSearch 인덱스 및 문서 관리 서비스
@@ -44,6 +42,7 @@ public class OpenSearchService {
     private final OpenSearchClient openSearchClient;
     private final AnalyzerConfigLoader analyzerConfigLoader;
     private final VectorFieldConfig vectorFieldConfig;
+    private final ObjectMapper objectMapper;
 
     /**
      * 특정 필드 값이 허용된 목록에 포함되지 않는 문서들을 삭제합니다.
@@ -128,6 +127,24 @@ public class OpenSearchService {
 
         } catch (Exception e) {
             log.error("인덱스 생성 실패: {}", definition.getIndexName(), e);
+            try {
+                // 에러 발생 시 요청 JSON 본문을 다시 로깅
+                CreateIndexRequest createIndexRequest = CreateIndexRequest.of(c -> c
+                        .index(definition.getIndexName())
+                        .settings(createIndexSettings(
+                                "unified".equals(definition.getIndexName()) ? 5 : 1, // 샤드 수
+                                1, // 복제본 수
+                                definition
+                        ))
+                        .mappings(m -> m.properties(createMappingProperties(
+                                definition.getFields(),
+                                definition.getIndexName()
+                        )))
+                );
+                log.error("실패한 CreateIndexRequest JSON: {}", objectMapper.writeValueAsString(createIndexRequest));
+            } catch (Exception jsonE) {
+                log.error("CreateIndexRequest JSON 직렬화 실패: {}", jsonE.getMessage());
+            }
             throw new RuntimeException("인덱스 생성 실패", e);
         }
     }
@@ -269,7 +286,7 @@ public class OpenSearchService {
             String jsonString = objectMapper.writeValueAsString(document);
 
             // RestClient를 직접 사용하여 JSON 문자열 전송
-            org.opensearch.client.transport.rest_client.RestClientTransport transport =
+            org.opensearch.client.transport.rest_client.RestClientTransport transport = 
                 (org.opensearch.client.transport.rest_client.RestClientTransport) openSearchClient._transport();
             org.opensearch.client.transport.OpenSearchTransport rawTransport = transport;
 
@@ -436,8 +453,7 @@ public class OpenSearchService {
             }
 
             SearchResponse<Map> response = openSearchClient.search(searchRequestBuilder.build(), Map.class);
-            log.info("OpenSearch response: {} hits", response.hits().total().value());
-
+            
             List<Map<String, Object>> documents = response.hits().hits().stream()
                     .map(hit -> {
                         Map<String, Object> source = new HashMap<>(hit.source());
@@ -536,7 +552,6 @@ public class OpenSearchService {
                                                     .boost((float) finalTextScore)
                                             )
                                     )
-                                    // 구문(Phrase)이 일치하는 문서에 가중치 부여 (10배)
                                     .should(sh -> sh
                                             .bool(b2 -> b2
                                                     .should(s -> s
@@ -574,9 +589,34 @@ public class OpenSearchService {
                                             )
                                     )
                             )
+                    )
+                    // 하이라이팅 추가 (리랭킹 입력용)
+                    .highlight(h -> h
+                            .fields("TITLE", f -> f
+                                    // 기본 하이라이터 사용 (type 제거)
+                                    .preTags("<b>")
+                                    .postTags("</b>")
+                                    .fragmentSize(300) // 리랭킹에 충분한 컨텍스트 제공 위해 크기 증가
+                                    .numberOfFragments(1)
+                            )
+                            .fields("CONTENTS", f -> f
+                                    // 기본 하이라이터 사용 (type 제거)
+                                    .preTags("<b>")
+                                    .postTags("</b>")
+                                    .fragmentSize(300)
+                                    .numberOfFragments(3) // 여러 문단 매칭될 수 있으므로
+                            )
                     );
 
             SearchResponse<Map> response = openSearchClient.search(searchRequestBuilder.build(), Map.class);
+
+            // 하이라이트 결과 파싱
+            Map<String, Map<String, List<String>>> highlights = new HashMap<>();
+            response.hits().hits().forEach(hit -> {
+                if (hit.highlight() != null && !hit.highlight().isEmpty()) {
+                    highlights.put(hit.id(), hit.highlight());
+                }
+            });
 
             List<Map<String, Object>> documents = response.hits().hits().stream()
                     .map(hit -> {
@@ -592,7 +632,7 @@ public class OpenSearchService {
             return SearchResultDto.builder()
                     .totalHits(response.hits().total().value())
                     .documents(documents)
-                    .highlights(null)
+                    .highlights(highlights) // 하이라이트 정보 포함
                     .build();
 
         } catch (Exception e) {
@@ -639,6 +679,19 @@ public class OpenSearchService {
                                                             )
                                                     )
                                                     .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
+                                                    .innerHits(ih -> ih
+                                                            .name("nested_highlights")
+                                                            .highlight(ihh -> ihh
+                                                                    .fields(nestedPath + "." + textField, f -> f
+                                                                            .preTags("<b>")
+                                                                            .postTags("</b>")
+                                                                            .fragmentSize(300)
+                                                                            .numberOfFragments(1)
+                                                                            .requireFieldMatch(false)
+                                                                    )
+                                                            )
+                                                            .size(3) // 매칭된 문단 최대 3개 가져오기
+                                                    )
                                             )
                                     )
                                     .should(s -> s
@@ -653,19 +706,16 @@ public class OpenSearchService {
                                                             )
                                                     )
                                                     .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
+                                                    .innerHits(ih -> ih
+                                                            .name("nested_vectors")
+                                                            .size(1) // 벡터 매칭 문단 1개
+                                                    )
                                             )
                                     )
                             )
                     )
                     .highlight(h -> h
                             .fields("FILE_NM", f -> f
-                                    .preTags("<b>")
-                                    .postTags("</b>")
-                                    .fragmentSize(100)
-                                    .numberOfFragments(1)
-                                    .requireFieldMatch(false)
-                            )
-                            .fields(nestedPath + "." + textField, f -> f
                                     .preTags("<b>")
                                     .postTags("</b>")
                                     .fragmentSize(100)
@@ -680,8 +730,36 @@ public class OpenSearchService {
             // 하이라이트 결과 파싱
             Map<String, Map<String, List<String>>> highlights = new HashMap<>();
             response.hits().hits().forEach(hit -> {
-                if (hit.highlight() != null && !hit.highlight().isEmpty()) {
-                    highlights.put(hit.id(), hit.highlight());
+                Map<String, List<String>> docHighlights = new HashMap<>();
+                
+                // 1. 상위 문서 하이라이트 (FILE_NM)
+                if (hit.highlight() != null) {
+                    docHighlights.putAll(hit.highlight());
+                }
+                
+                // 2. Nested Inner Hits 하이라이트 (content)
+                if (hit.innerHits() != null && hit.innerHits().containsKey("nested_highlights")) {
+                    var innerHitsResult = hit.innerHits().get("nested_highlights");
+                    java.util.List<String> collectedContents = new java.util.ArrayList<>();
+                    
+                    for (var innerHit : innerHitsResult.hits().hits()) {
+                        if (innerHit.highlight() != null && innerHit.highlight().containsKey(nestedPath + "." + textField)) {
+                            collectedContents.addAll(innerHit.highlight().get(nestedPath + "." + textField));
+                        } else if (innerHit.source() != null) {
+                            // 하이라이트가 없으면 소스에서 직접 가져옴
+                            Map<String, Object> innerSource = (Map<String, Object>) innerHit.source();
+                            if (innerSource.containsKey(textField)) {
+                                collectedContents.add(innerSource.get(textField).toString());
+                            }
+                        }
+                    }
+                    if (!collectedContents.isEmpty()) {
+                        docHighlights.put(nestedPath + "." + textField, collectedContents);
+                    }
+                }
+                
+                if (!docHighlights.isEmpty()) {
+                    highlights.put(hit.id(), docHighlights);
                 }
             });
             
@@ -902,7 +980,8 @@ public class OpenSearchService {
         }
 
         // YAML 설정의 벡터 필드 추가
-        if (vectorFieldConfig.hasVectorField(indexName)) {
+        // 단, file 인덱스는 이미 IndexRegistry에서 Nested 구조로 벡터 필드를 정의했으므로 중복 추가 방지
+        if (!"file".equalsIgnoreCase(indexName) && vectorFieldConfig.hasVectorField(indexName)) {
             VectorFieldConfig.VectorField vectorField = vectorFieldConfig.getVectorField(indexName);
             Property vectorProperty = Property.of(p -> p.knnVector(knn -> 
                 knn.dimension(vectorField.getDimension())
@@ -940,7 +1019,7 @@ public class OpenSearchService {
             case BOOLEAN -> Property.of(p -> p.boolean_(b -> b));
             case DATE -> Property.of(p -> p.date(d -> d));
             case KNN_VECTOR -> Property.of(p -> p.knnVector(knn -> {
-                int dimension = field.getDimension() != null ? field.getDimension() : 1024;
+                int dimension = field.getDimension() != null ? field.getDimension() : 768;
                 return knn.dimension(dimension)
                           .method(method -> method
                               .name("hnsw")

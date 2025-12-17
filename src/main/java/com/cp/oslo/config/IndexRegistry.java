@@ -103,7 +103,19 @@ public class IndexRegistry {
                 .build());
 
         // 6. File 인덱스 정의
-        int fileDimension = vectorFieldConfig.getVectorField("file") != null ? vectorFieldConfig.getVectorField("file").getDimension() : 1024;
+        int fileDimension = 768; // 기본값을 768로 변경 (하드코딩)
+        
+        // 설정값이 있으면 덮어쓰기 (단, 1024가 들어올 수 있으므로 주의)
+        if (vectorFieldConfig.getVectorField("file") != null) {
+            Integer dim = vectorFieldConfig.getVectorField("file").getDimension();
+            if (dim != null && dim > 0) {
+                fileDimension = dim;
+            } else if (vectorFieldConfig.getDimension() != null) {
+                // 전역 설정이 1024라면 여기서 1024가 됨. application.yml의 embedding.dimension을 확인해야 함.
+                fileDimension = vectorFieldConfig.getDimension();
+            }
+        }
+        
         definitions.put("file", IndexDefinition.builder()
                 .indexName("file")
                 .sourceTableName("TB_FILE")

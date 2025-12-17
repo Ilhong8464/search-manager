@@ -74,9 +74,12 @@ logging:
 
 # 임베딩 서비스 설정
 embedding:
-  dimension: 1024 # 전역 벡터 차원 설정
+  dimension: 768
   service:
     url: '${EMBEDDING_URL}:${EMBEDDING_PORT}'
+  rerank:
+    enabled: true
+    window-size: 50
   # 각 인덱스별 벡터 필드 설정
   vector-fields:
     manual:
