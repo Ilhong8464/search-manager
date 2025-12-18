@@ -211,7 +211,7 @@ public class SearchController {
         // 리랭킹 수행
         if (applyRerank && !initialSearchResult.getDocuments().isEmpty()) {
             try {
-                log.info("리랭킹 시작: 후보 문서 {}개", initialSearchResult.getDocuments().size());
+//                log.info("리랭킹 시작: 후보 문서 {}개", initialSearchResult.getDocuments().size());
                 
                 final Map<String, Map<String, List<String>>> highlightsForRerank = initialSearchResult.getHighlights();
 
@@ -221,12 +221,12 @@ public class SearchController {
                         .collect(Collectors.toList());
                 
                 // 2. 리랭킹 API 호출
-                long rerankStartTime = System.currentTimeMillis();
+//                long rerankStartTime = System.currentTimeMillis();
                 Map<String, Object> rerankResult = embeddingClient.rerank(query, rerankInputs);
                 List<Integer> indices = (List<Integer>) rerankResult.get("indices");
                 List<Double> scores = (List<Double>) rerankResult.get("scores");
-                long rerankEndTime = System.currentTimeMillis();
-                log.info("리랭킹 API 호출 소요 시간: {}ms", (rerankEndTime - rerankStartTime));
+//                long rerankEndTime = System.currentTimeMillis();
+//                log.info("리랭킹 API 호출 소요 시간: {}ms", (rerankEndTime - rerankStartTime));
                 
                 // 3. 결과 재정렬 및 점수 업데이트
                 List<Map<String, Object>> reorderedDocs = new java.util.ArrayList<>();
@@ -250,9 +250,9 @@ public class SearchController {
                         .documents(reorderedDocs.subList(0, finalSize))
                         .highlights(initialSearchResult.getHighlights())
                         .build();
-                        
-                log.info("리랭킹 완료: 상위 {}개 선택", finalSize);
-                
+
+//                log.info("리랭킹 완료: 상위 {}개 선택", finalSize);
+
             } catch (Exception e) {
                 log.error("리랭킹 수행 중 오류 발생 (기존 결과 반환)", e);
                 // 리랭킹 실패 시, initialSearchResult에서 요청된 size만큼만 잘라서 반환
