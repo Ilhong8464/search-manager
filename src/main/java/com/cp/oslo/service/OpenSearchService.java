@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.opensearch.client.opensearch.OpenSearchClient;
 import org.opensearch.client.opensearch._types.mapping.*;
+import org.opensearch.client.opensearch._types.analysis.NoriDecompoundMode;
 import org.opensearch.client.opensearch.core.BulkRequest;
 import org.opensearch.client.opensearch.core.BulkResponse;
 import org.opensearch.client.opensearch.core.SearchResponse;
@@ -922,6 +923,7 @@ public class OpenSearchService {
         
         List<String> filters = new java.util.ArrayList<>();
         filters.add("lowercase");
+        filters.add("nori_part_of_speech"); // 조사 제거를 먼저 수행하여 동의어 매칭 효율 증대
         
         // 동의어 필터가 유효한지 확인하고 필터 목록에 추가
         boolean hasSynonyms = synonyms != null && !synonyms.isEmpty();
@@ -935,6 +937,7 @@ public class OpenSearchService {
             filters.add("stopword_filter");
         }
         
+        filters.add("length_filter"); // 1글자 토큰 제거 필터 (노이즈 매칭 방지)
         filters.add("nori_readingform");
 
         IndexSettings.Builder builder = new IndexSettings.Builder()
@@ -944,17 +947,38 @@ public class OpenSearchService {
                     // 1. 필터 정의 (조건부)
                     if (hasSynonyms) {
                         a.filter("synonym_filter", tf -> tf
-                                .definition(tfd -> tfd.synonym(syn -> syn.synonyms(synonyms))));
+                                .definition(tfd -> tfd.synonym(syn -> syn
+                                        .synonyms(synonyms)
+                                        .tokenizer("whitespace") // 정규화된 데이터에는 whitespace가 가장 안전
+                                        .lenient(true) // 오류 발생 규칙 무시 (전체 실패 방지)
+                                )));
                     }
                     if (hasStopwords) {
                         a.filter("stopword_filter", tf -> tf
                                 .definition(tfd -> tfd.stop(stop -> stop.stopwords(stopwords))));
                     }
                     
-                    // 2. 분석기 정의
+                    // 1글자 제거 필터 정의 (최소 2글자 이상만 허용)
+                    a.filter("length_filter", tf -> tf
+                            .definition(tfd -> tfd.length(len -> len
+                                    .min(2)
+                                    .max(100) // max 값 필수 지정 (충분히 큰 값으로 설정)
+                            ))
+                    );
+                    
+                    // 2. 토크나이저 정의
+                    a.tokenizer("nori_tokenizer_mixed", t -> t
+                            .definition(td -> td
+                                    .noriTokenizer(nt -> nt
+                                            .decompoundMode(NoriDecompoundMode.Mixed)
+                                    )
+                            )
+                    );
+                    
+                    // 3. 분석기 정의
                     a.analyzer("nori_custom", an -> an
                             .custom(ca -> ca
-                                    .tokenizer("nori_tokenizer")
+                                    .tokenizer("nori_tokenizer_mixed")
                                     .filter(filters)
                             )
                     );
