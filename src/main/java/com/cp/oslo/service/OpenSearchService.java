@@ -40,6 +40,9 @@ import org.opensearch.client.opensearch._types.FieldValue;
 @Slf4j
 public class OpenSearchService {
 
+    private static final int HIGHLIGHT_FRAGMENT_SIZE = 200;
+    private static final int HIGHLIGHT_NUM_OF_FRAGMENTS = 1;
+
     private final OpenSearchClient openSearchClient;
     private final AnalyzerConfigLoader analyzerConfigLoader;
     private final VectorFieldConfig vectorFieldConfig;
@@ -428,8 +431,8 @@ public class OpenSearchService {
                                 .type(t -> t.builtin(BuiltinHighlighterType.Unified))
                                 .preTags("<b>")
                                 .postTags("</b>")
-                                .fragmentSize(100)
-                                .numberOfFragments(1)
+                                .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE)
+                                .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS)
                                 .highlightQuery(hq -> hq.bool(b -> {
                                     for (String token : query.split("\\s+")) {
                                         b.should(s -> s.matchPhrase(mp -> mp.field("TITLE").query(token)));
@@ -441,8 +444,8 @@ public class OpenSearchService {
                                 .type(t -> t.builtin(BuiltinHighlighterType.Unified))
                                 .preTags("<b>")
                                 .postTags("</b>")
-                                .fragmentSize(100)
-                                .numberOfFragments(1)
+                                .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE)
+                                .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS)
                                 .highlightQuery(hq -> hq.bool(b -> {
                                     for (String token : query.split("\\s+")) {
                                         b.should(s -> s.matchPhrase(mp -> mp.field("CONTENTS").query(token)));
@@ -550,7 +553,7 @@ public class OpenSearchService {
                                             .multiMatch(mm -> mm
                                                     .fields(textFields)
                                                     .query(queryText)
-                                                    .boost((float) finalTextScore)
+                                                    .boost((float) finalTextScore * 10.0f) // 텍스트 매칭 중요도 상향
                                             )
                                     )
                                     .should(sh -> sh
@@ -560,7 +563,7 @@ public class OpenSearchService {
                                                                     .field("TITLE")
                                                                     .query(queryText)
                                                                     .slop(2) // 단어 사이 간격 허용
-                                                                    .boost((float) finalTextScore * 3.0f)
+                                                                    .boost((float) finalTextScore * 20.0f) // 정확 매칭 중요도 대폭 상향
                                                             )
                                                     )
                                                     .should(s -> s
@@ -568,7 +571,7 @@ public class OpenSearchService {
                                                                     .field("CONTENTS")
                                                                     .query(queryText)
                                                                     .slop(2)
-                                                                    .boost((float) finalTextScore * 3.0f)
+                                                                    .boost((float) finalTextScore * 20.0f) // 정확 매칭 중요도 대폭 상향
                                                             )
                                                     )
                                             )
@@ -586,7 +589,7 @@ public class OpenSearchService {
                                             .term(t -> t
                                                     .field("DATA_TYPE")
                                                     .value(FieldValue.of("MANUAL"))
-                                                    .boost((float) finalTextScore * 3.0f)
+                                                    .boost((float) finalTextScore * 2.0f) // 상대적 비중 조정
                                             )
                                     )
                             )
@@ -597,15 +600,15 @@ public class OpenSearchService {
                                     // 기본 하이라이터 사용 (type 제거)
                                     .preTags("<b>")
                                     .postTags("</b>")
-                                    .fragmentSize(300) // 리랭킹에 충분한 컨텍스트 제공 위해 크기 증가
-                                    .numberOfFragments(1)
+                                    .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE) // 리랭킹에 충분한 컨텍스트 제공 위해 크기 증가
+                                    .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS)
                             )
                             .fields("CONTENTS", f -> f
                                     // 기본 하이라이터 사용 (type 제거)
                                     .preTags("<b>")
                                     .postTags("</b>")
-                                    .fragmentSize(300)
-                                    .numberOfFragments(3) // 여러 문단 매칭될 수 있으므로
+                                    .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE)
+                                    .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS) // 여러 문단 매칭될 수 있으므로
                             )
                     );
 
@@ -666,7 +669,7 @@ public class OpenSearchService {
                                             .multiMatch(m -> m // FILE_NM을 텍스트 검색에 포함
                                                     .fields("FILE_NM")
                                                     .query(queryText)
-                                                    .boost((float) textScore)
+                                                    .boost((float) textScore * 10.0f)
                                             )
                                     )
                                     .should(s -> s
@@ -676,7 +679,7 @@ public class OpenSearchService {
                                                             .match(m -> m
                                                                     .field(nestedPath + "." + textField)
                                                                     .query(FieldValue.of(queryText))
-                                                                    .boost((float) textScore)
+                                                                    .boost((float) textScore * 10.0f)
                                                             )
                                                     )
                                                     .scoreMode(org.opensearch.client.opensearch._types.query_dsl.ChildScoreMode.Max)
@@ -686,12 +689,18 @@ public class OpenSearchService {
                                                                     .fields(nestedPath + "." + textField, f -> f
                                                                             .preTags("<b>")
                                                                             .postTags("</b>")
-                                                                            .fragmentSize(300)
-                                                                            .numberOfFragments(1)
-                                                                            .requireFieldMatch(false)
+                                                                            .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE)
+                                                                            .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS)
+                                                                            .requireFieldMatch(true)
+                                                                            .highlightQuery(hq -> hq
+                                                                                .matchPhrase(mp -> mp
+                                                                                    .field(nestedPath + "." + textField)
+                                                                                    .query(queryText)
+                                                                                )
+                                                                            )
                                                                     )
                                                             )
-                                                            .size(3) // 매칭된 문단 최대 3개 가져오기
+                                                            .size(HIGHLIGHT_NUM_OF_FRAGMENTS) // 매칭된 문단 최대 1개 가져오기
                                                     )
                                             )
                                     )
@@ -719,9 +728,15 @@ public class OpenSearchService {
                             .fields("FILE_NM", f -> f
                                     .preTags("<b>")
                                     .postTags("</b>")
-                                    .fragmentSize(100)
-                                    .numberOfFragments(1)
-                                    .requireFieldMatch(false)
+                                    .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE)
+                                    .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS)
+                                    .requireFieldMatch(true)
+                                    .highlightQuery(hq -> hq
+                                        .matchPhrase(mp -> mp
+                                            .field("FILE_NM")
+                                            .query(queryText)
+                                        )
+                                    )
                             )
                     )
                     .build();
@@ -748,9 +763,20 @@ public class OpenSearchService {
                             collectedContents.addAll(innerHit.highlight().get(nestedPath + "." + textField));
                         } else if (innerHit.source() != null) {
                             // 하이라이트가 없으면 소스에서 직접 가져옴
-                            Map<String, Object> innerSource = (Map<String, Object>) innerHit.source();
+                            Map<String, Object> innerSource;
+                            Object sourceObj = innerHit.source();
+                            if (sourceObj instanceof org.opensearch.client.json.JsonData) {
+                                innerSource = ((org.opensearch.client.json.JsonData) sourceObj).to(Map.class);
+                            } else {
+                                innerSource = (Map<String, Object>) sourceObj;
+                            }
+                            
                             if (innerSource.containsKey(textField)) {
-                                collectedContents.add(innerSource.get(textField).toString());
+                                String text = innerSource.get(textField).toString();
+                                if (text.length() > HIGHLIGHT_FRAGMENT_SIZE) {
+                                    text = text.substring(0, HIGHLIGHT_FRAGMENT_SIZE);
+                                }
+                                collectedContents.add(text);
                             }
                         }
                     }
@@ -821,9 +847,15 @@ public class OpenSearchService {
                                                                     .fields(nestedPath + "." + textField, f -> f
                                                                             .preTags("<b>")
                                                                             .postTags("</b>")
-                                                                            .fragmentSize(100)
-                                                                            .numberOfFragments(1)
-                                                                            .requireFieldMatch(false)
+                                                                            .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE)
+                                                                            .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS)
+                                                                            .requireFieldMatch(true)
+                                                                            .highlightQuery(hq -> hq
+                                                                                .matchPhrase(mp -> mp
+                                                                                    .field(nestedPath + "." + textField)
+                                                                                    .query(queryText)
+                                                                                )
+                                                                            )
                                                                     )
                                                             )
                                                     )
@@ -836,9 +868,15 @@ public class OpenSearchService {
                             .fields("FILE_NM", f -> f
                                     .preTags("<b>")
                                     .postTags("</b>")
-                                    .fragmentSize(100)
-                                    .numberOfFragments(1)
-                                    .requireFieldMatch(false)
+                                    .fragmentSize(HIGHLIGHT_FRAGMENT_SIZE)
+                                    .numberOfFragments(HIGHLIGHT_NUM_OF_FRAGMENTS)
+                                    .requireFieldMatch(true)
+                                    .highlightQuery(hq -> hq
+                                        .matchPhrase(mp -> mp
+                                            .field("FILE_NM")
+                                            .query(queryText)
+                                        )
+                                    )
                             )
                     )
                     .build();

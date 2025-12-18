@@ -27,9 +27,17 @@ import java.util.Collections;
 @Slf4j
 public class SearchController {
 
+    private static final int MAX_CONTENT_LENGTH = 200;
+
     private final OpenSearchService openSearchService;
     private final EmbeddingClient embeddingClient;
     private final AnalyzerConfigLoader analyzerConfigLoader;
+
+    private String truncateString(String str) {
+        if (str == null) return null;
+        if (str.length() <= MAX_CONTENT_LENGTH) return str;
+        return str.substring(0, MAX_CONTENT_LENGTH);
+    }
 
     @org.springframework.beans.factory.annotation.Value("${embedding.rerank.enabled:false}")
     private boolean rerankEnabled;
@@ -75,6 +83,12 @@ public class SearchController {
                     result.remove("embedding");
                     result.remove("_id");
                     result.remove("_score");
+
+                    // 원본 텍스트 길이 제한 (하이라이트 적용 전)
+                    if (result.containsKey("contents") && result.get("contents") instanceof String) {
+                        result.put("contents", truncateString((String) result.get("contents")));
+                    }
+                    // TITLE은 보통 짧지만 필요하다면 제한 (여기서는 CONTENTS 위주로)
 
                     if (source.containsKey("_score")) {
                         result.put("score", source.get("_score"));
@@ -142,6 +156,12 @@ public class SearchController {
                     result.remove("embedding");
                     result.remove("_id");
                     result.remove("_score");
+                    
+                    // 원본 텍스트 길이 제한
+                    if (result.containsKey("contents") && result.get("contents") instanceof String) {
+                        result.put("contents", truncateString((String) result.get("contents")));
+                    }
+
                     result.put("score", hit.score());
                     return result;
                 })
@@ -237,11 +257,27 @@ public class SearchController {
                         
                         // 점수 업데이트: _score 필드를 리랭킹 점수(Sigmoid 변환)로 덮어씀
                         double rawScore = scores.get(originalIndex);
-                        doc.put("_score", sigmoid(rawScore));
+                        double finalScore = sigmoid(rawScore);
+                        
+                        // [보정] 텍스트 매칭(하이라이트) 가산점 부여
+                        // 키워드가 명시적으로 포함된 문서의 순위를 보장하기 위함
+                        String docId = doc.get("_id") != null ? doc.get("_id").toString() : null;
+                        if (docId != null && highlightsForRerank != null && highlightsForRerank.containsKey(docId)) {
+                            // 하이라이트 정보가 있다면 검색어가 포함된 것이므로 가산점 부여
+                            finalScore += 0.1; 
+                        }
+                        
+                        doc.put("_score", finalScore);
                         
                         reorderedDocs.add(doc);
                     }
                 }
+                
+                // 점수 변경(가산점)에 따라 다시 내림차순 정렬
+                reorderedDocs.sort((d1, d2) -> Double.compare(
+                    ((Number) d2.get("_score")).doubleValue(), 
+                    ((Number) d1.get("_score")).doubleValue()
+                ));
                 
                 // 4. 상위 N개만 선택하여 finalSearchResult 구성
                 int finalSize = Math.min(size, reorderedDocs.size());
@@ -285,6 +321,11 @@ public class SearchController {
                     result.remove("embedding");
                     result.remove("_id");
                     result.remove("_score");
+                    
+                    // 원본 텍스트 길이 제한 (하이라이트 적용 전)
+                    if (result.containsKey("contents") && result.get("contents") instanceof String) {
+                        result.put("contents", truncateString((String) result.get("contents")));
+                    }
                     
                     if (source.containsKey("_score")) {
                         result.put("score", source.get("_score"));
@@ -373,10 +414,12 @@ public class SearchController {
                         Object paragraphsObj = doc.get("paragraphs");
                         if (paragraphsObj instanceof List) {
                             List<?> paragraphs = (List<?>) paragraphsObj;
+                            // 하이라이트가 없을 경우 첫 번째 문단만 잘라서 사용
                             List<String> contents = paragraphs.stream()
+                                    .limit(1) // 첫 번째 문단만
                                     .map(p -> {
                                         if (p instanceof Map) {
-                                            return (String) ((Map<?, ?>) p).get("content");
+                                            return truncateString((String) ((Map<?, ?>) p).get("content"));
                                         }
                                         return null;
                                     })
