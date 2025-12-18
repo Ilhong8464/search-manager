@@ -181,6 +181,7 @@ public class FileIndexingService {
 
         // 5. Build Document
         Map<String, Object> doc = new HashMap<>();
+        doc.put("id", file.getFileUuid()); // OpenSearch _id 매핑
         doc.put("FILE_ID", file.getFileId());
         doc.put("FILE_NM", file.getFileNm());
         doc.put("SAVED_FILE_PATH", file.getSavedFilePath());
