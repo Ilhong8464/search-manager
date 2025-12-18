@@ -35,13 +35,33 @@ public class AnalyzerConfigLoader {
         List<String> rawSynonyms = loadFromDatabase(SYNONYMS_KEY_PATH, "동의어");
         
         return rawSynonyms.stream()
-                .filter(line -> {
-                    boolean isValid = line.contains(",") || line.contains("=>");
-                    if (!isValid) {
-                        log.warn("유효하지 않은 동의어 규칙 무시됨 (쉼표 또는 '=>' 없음): {}", line);
+                .map(line -> {
+                    try {
+                        // 1. 매핑형 규칙 (A => B) 정규화
+                        if (line.contains("=>")) {
+                            String[] parts = line.split("=>");
+                            if (parts.length == 2 && !parts[0].trim().isEmpty() && !parts[1].trim().isEmpty()) {
+                                return parts[0].trim() + " => " + parts[1].trim();
+                            }
+                        } 
+                        // 2. 나열형 규칙 (A, B, C) 정규화
+                        else if (line.contains(",")) {
+                            String normalized = Arrays.stream(line.split(","))
+                                    .map(String::trim)
+                                    .filter(s -> !s.isEmpty())
+                                    .collect(Collectors.joining(", "));
+                            
+                            // 최소 2개 단어가 있어야 유효
+                            if (normalized.contains(",")) {
+                                return normalized;
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.warn("동의어 규칙 정규화 실패: {}", line);
                     }
-                    return isValid;
+                    return null; // 유효하지 않으면 null 반환
                 })
+                .filter(line -> line != null) // null 제거
                 .collect(Collectors.toList());
     }
     
