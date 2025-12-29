@@ -6,6 +6,12 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.web.reactive.function.BodyInserters;
+
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 
@@ -26,6 +32,53 @@ public class EmbeddingClient {
                         .build())
                 .build();
         log.info("EmbeddingClient 초기화: {}", embeddingServiceUrl);
+    }
+
+    /**
+     * 이미지 파일 OCR 요청 (파일 전송 방식)
+     */
+    public String ocr(File file, String contentType) {
+        try {
+            log.debug("OCR 요청: 파일={}, 크기={} bytes, 타입={}", file.getName(), file.length(), contentType);
+
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            
+            // 파일명 보정: PDF인데 확장자가 없으면 .pdf 추가
+            String filename = file.getName();
+            if ("application/pdf".equalsIgnoreCase(contentType) && !filename.toLowerCase().endsWith(".pdf")) {
+                filename += ".pdf";
+                log.debug("PDF 파일명 확장자 보정 전송: {}", filename);
+            }
+            
+            builder.part("file", new FileSystemResource(file))
+                   .filename(filename); // 보정된 파일명 설정
+
+            Map<String, Object> response = webClient.post()
+                    .uri("/ocr")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(BodyInserters.fromMultipartData(builder.build()))
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .block();
+
+            if (response == null) {
+                throw new RuntimeException("OCR 서비스 응답이 null입니다");
+            }
+
+            String text = (String) response.get("text");
+            if (text == null) {
+                log.warn("OCR 결과 텍스트가 없습니다.");
+                return "";
+            }
+
+            log.debug("OCR 완료: 텍스트 길이={}", text.length());
+            return text;
+
+        } catch (Exception e) {
+            log.error("OCR 요청 실패: {}", file.getName(), e);
+            // OCR 실패 시 예외를 던지지 않고 빈 문자열 반환 (필요 시 정책 변경)
+            throw new RuntimeException("OCR 요청 실패", e);
+        }
     }
 
     /**

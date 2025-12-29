@@ -40,29 +40,31 @@ public class FileIndexingService {
     @Value("${logging.file.path:/app/upload}")
     private String containerUploadPath;
 
-    /**
-     * TB_CONFIG 테이블에서 활성화된 파일 인덱싱 대상 컬렉션 타입 조회
-     * (CALL, MANUAL, NOTICE로 제한)
-     */
-    private List<String> fetchEnabledFileTypes() {
-        try {
-            // KEY_PATH가 'System.SearchEngine.Collection.'으로 시작하고 CONFIG_VALUE가 'Y'인 항목 조회
-            // CONFIG_KEY를 대문자로 변환하여 반환
-            String sql = "SELECT UPPER(CONFIG_KEY) FROM TB_CONFIG " +
-                         "WHERE KEY_PATH LIKE 'System.SearchEngine.Collection.%' " +
-                         "AND CONFIG_VALUE = 'Y'";
-            
-            List<String> rawEnabledTypes = jdbcTemplate.queryForList(sql, String.class);
+    @Value("${search.indexes.file.ocr-enabled:false}")
+    private boolean ocrEnabled;
 
-            // CALL, MANUAL, NOTICE 타입만 필터링
-            return rawEnabledTypes.stream()
-                                  .filter(type -> List.of("CALL", "MANUAL", "NOTICE").contains(type))
-                                  .collect(Collectors.toList());
-        } catch (Exception e) {
-            log.error("TB_CONFIG에서 활성화된 파일 타입 조회 실패", e);
-            return Collections.emptyList();
-        }
-    }
+    @Value("#{'${search.indexes.file.target-src-ids:CALL,MANUAL,NOTICE}'.split(',')}")
+    private List<String> targetSrcIds;
+    
+    private static final List<String> SUPPORTED_CONTENT_TYPES = List.of(
+            "application/pdf",
+            // PPT
+            "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.oasis.opendocument.presentation",
+            // Excel
+            "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            // Text/CSV
+            "text/csv", "text/plain",
+            // Word
+            "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.oasis.opendocument.text", "application/rtf",
+            // HWP
+            "application/x-hwp", "application/haansofthwp", "application/vnd.hancom.hwp", "application/hwp+zip",
+            // Images
+            "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff",
+            // Etc
+            "application/octet-stream"
+    );
 
     @Transactional(readOnly = true)
     public void indexAllFiles() {
@@ -75,16 +77,15 @@ public class FileIndexingService {
             openSearchService.createIndex(indexRegistry.get("file"));
         }
 
-        // 2. 활성화된 파일 타입 (CALL, MANUAL, NOTICE) 조회
-        List<String> enabledTypes = fetchEnabledFileTypes();
-        if (enabledTypes.isEmpty()) {
-            log.warn("TB_CONFIG에 활성화된 파일 인덱싱 대상 타입(CALL, MANUAL, NOTICE)이 없습니다. 파일 인덱싱을 건너뜝니다.");
+        // 2. 활성화된 파일 타입 확인 (Yaml 설정)
+        if (targetSrcIds == null || targetSrcIds.isEmpty()) {
+            log.warn("파일 인덱싱 대상 타입(target-src-ids)이 설정되지 않았습니다. 파일 인덱싱을 건너뜝니다.");
             return;
         }
-        log.info("인덱싱 대상 활성화된 파일 타입: {}", enabledTypes);
+        log.info("인덱싱 대상 파일 타입(SRC_ID1): {}", targetSrcIds);
 
         // 3. 파일 조회 (컨텐츠 타입 및 SRC_ID1 필터링)
-        List<TbFile> files = tbFileRepository.findIndexableFilesByContentTypesAndSrcId1In(enabledTypes);
+        List<TbFile> files = tbFileRepository.findIndexableFilesByContentTypesAndSrcId1In(SUPPORTED_CONTENT_TYPES, targetSrcIds);
         log.info("인덱싱 대상 파일 수: {}", files.size());
 
         int success = 0;
@@ -144,7 +145,7 @@ public class FileIndexingService {
         }
 
         // 2. Tika Text Extraction
-        String content = extractText(targetFile);
+        String content = extractText(targetFile, file.getContentType());
         if (content == null || content.trim().isEmpty()) {
             log.warn("텍스트 추출 결과 없음: {}", file.getFileId());
             return;
@@ -231,7 +232,60 @@ public class FileIndexingService {
         openSearchService.indexDocument("file", doc);
     }
 
-    private String extractText(File file) throws Exception {
+    private String extractText(File file, String contentType) throws Exception {
+        String fileName = file.getName(); // 로깅용
+        
+        // 1. 이미지 파일이면 바로 OCR (활성화된 경우만)
+        if (ocrEnabled && isImageContentType(contentType)) {
+            return performOcr(file, contentType);
+        }
+
+        // 2. Tika (기본 텍스트 추출)
+        String content = "";
+        try {
+            content = extractTextWithTika(file);
+        } catch (Exception e) {
+            log.warn("Tika 텍스트 추출 실패 (파일: {}): {}", fileName, e.getMessage());
+        }
+
+        // 3. 텍스트가 없고 PDF인 경우 OCR 시도 (활성화된 경우만)
+        if (ocrEnabled && (content == null || content.trim().isEmpty()) && "application/pdf".equalsIgnoreCase(contentType)) {
+            log.info("PDF 텍스트 추출 결과 없음. OCR 시도: {}", fileName);
+            return performOcr(file, contentType);
+        }
+        
+        return content;
+    }
+
+    private boolean isImageContentType(String contentType) {
+        if (contentType == null) return false;
+        String lower = contentType.toLowerCase();
+        return lower.startsWith("image/") && !lower.equals("image/svg+xml"); // SVG는 OCR 제외 등 정책 필요 시 조정
+    }
+
+    private String performOcr(File file, String contentType) {
+        try {
+            log.info("OCR 요청: {}", file.getName());
+            String ocrText = embeddingClient.ocr(file, contentType);
+            if (ocrText == null || ocrText.trim().isEmpty()) {
+                log.warn("OCR 결과가 비어있습니다: {}", file.getName());
+                return "";
+            }
+
+            // 추출된 텍스트가 3글자 이상인 경우에만 반환
+            if (ocrText.trim().length() <= 2) {
+                log.warn("OCR 추출 결과가 너무 짧아(2자 이하) 색인에서 제외합니다 (결과: '{}'): {}", ocrText.trim(), file.getName());
+                return "";
+            }
+
+            return ocrText;
+        } catch (Exception e) {
+            log.error("OCR 처리 중 오류 발생: {}", file.getName(), e);
+            return "";
+        }
+    }
+
+    private String extractTextWithTika(File file) throws Exception {
         BodyContentHandler handler = new BodyContentHandler(-1); // Unlimited size
         AutoDetectParser parser = new AutoDetectParser();
         Metadata metadata = new Metadata();
