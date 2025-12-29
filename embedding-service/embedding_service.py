@@ -1,12 +1,15 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 from FlagEmbedding import FlagReranker
 from dotenv import load_dotenv
 import os
-import torch # torch import 추가
+import torch
 import numpy as np
 import gc
+import easyocr
+import cv2
+from pdf2image import convert_from_bytes
 
 load_dotenv()
 
@@ -20,6 +23,13 @@ elif torch.cuda.is_available(): # CUDA(NVIDIA GPU)도 확인
     device = "cuda"
 
 print(f"Using device: {device}")
+
+# 0. OCR Model Load (EasyOCR)
+# GPU 사용 여부: device가 cpu가 아니면 True
+use_gpu = (device != "cpu")
+print(f"Loading EasyOCR Model (gpu={use_gpu})...")
+# 한국어('ko'), 영어('en') 지원
+reader = easyocr.Reader(['ko', 'en'], gpu=use_gpu)
 
 # 1. Embedding Model Load
 embed_model = SentenceTransformer(os.getenv('EMBEDDING_MODEL_NAME', 'jhgan/ko-sroberta-sts'), device=device)
@@ -118,3 +128,56 @@ async def rerank_documents(request: RerankRequest):
         "scores": scores_list,
         "indices": indices
     }
+
+@app.post("/ocr")
+async def ocr_image(file: UploadFile = File(...)):
+    """
+    이미지 또는 PDF 파일을 업로드 받아 텍스트를 추출합니다.
+    """
+    try:
+        filename = file.filename.lower()
+        contents = await file.read()
+        extracted_texts = []
+
+        # 1. PDF 처리
+        if filename.endswith(".pdf"):
+            try:
+                # PDF를 이미지 리스트로 변환 (기본 200dpi)
+                images = convert_from_bytes(contents)
+                print(f"PDF 변환됨: {len(images)} 페이지")
+                
+                for i, image in enumerate(images):
+                    # PIL Image -> NumPy array (OpenCV format)
+                    img_np = np.array(image)
+                    
+                    # EasyOCR 수행
+                    result = reader.readtext(img_np, detail=0, paragraph=True)
+                    page_text = "\n".join(result)
+                    extracted_texts.append(page_text)
+                    print(f" - {i+1}페이지 OCR 완료")
+                    
+            except Exception as e:
+                print(f"PDF 처리 실패 (poppler가 설치되었는지 확인하세요): {e}")
+                raise HTTPException(status_code=500, detail=f"PDF 처리 실패: {str(e)}")
+
+        # 2. 일반 이미지 처리
+        else:
+            # 바이트를 numpy 배열로 변환
+            nparr = np.frombuffer(contents, np.uint8)
+            # 이미지를 OpenCV 포맷으로 디코딩
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            if img is None:
+                raise HTTPException(status_code=400, detail="이미지 파일을 디코딩할 수 없습니다.")
+
+            # OCR 수행
+            result = reader.readtext(img, detail=0, paragraph=True)
+            extracted_texts.append("\n".join(result))
+        
+        # 결과 텍스트 결합
+        full_text = "\n\n".join(extracted_texts)
+        return {"text": full_text}
+        
+    except Exception as e:
+        print(f"OCR 처리 중 오류 발생: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"OCR 처리 실패: {str(e)}")
