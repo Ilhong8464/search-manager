@@ -1,6 +1,6 @@
 package com.cp.oslo.service;
 
-import com.cp.oslo.client.EmbeddingClient;
+import com.cp.oslo.client.SearchIntelligenceClient;
 import com.cp.oslo.config.IndexRegistry;
 import com.cp.oslo.config.SearchIndexProperties;
 import com.cp.oslo.config.VectorFieldConfig;
@@ -36,7 +36,7 @@ public class IndexingService {
     
     private final OpenSearchService openSearchService;
     private final JdbcTemplate jdbcTemplate;
-    private final EmbeddingClient embeddingClient;
+    private final SearchIntelligenceClient searchIntelligenceClient;
     private final VectorFieldConfig vectorFieldConfig;
     private final FileIndexingService fileIndexingService;
 
@@ -603,7 +603,7 @@ public class IndexingService {
     }
 
     private void enrichDocumentsWithEmbedding(String indexName, List<Map<String, Object>> documents) {
-         if (vectorFieldConfig.hasVectorField(indexName) && embeddingClient.isAvailable()) {
+         if (vectorFieldConfig.hasVectorField(indexName) && searchIntelligenceClient.isAvailable()) {
             VectorFieldConfig.VectorField vectorField = vectorFieldConfig.getVectorField(indexName);
             String[] sourceFields = vectorField.getSourceField().split(",");
             
@@ -632,7 +632,7 @@ public class IndexingService {
             // 2. 배치 임베딩 요청 및 결과 매핑
             if (!textsToEmbed.isEmpty()) {
                 try {
-                    List<List<Double>> embeddings = embeddingClient.embedBatch(textsToEmbed);
+                    List<List<Double>> embeddings = searchIntelligenceClient.embedBatch(textsToEmbed);
                     
                     if (embeddings.size() != docsToEmbed.size()) {
                         log.warn("요청한 텍스트 수({})와 반환된 임베딩 수({})가 일치하지 않습니다.", 

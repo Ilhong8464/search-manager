@@ -1,6 +1,6 @@
 package com.cp.oslo.controller;
 
-import com.cp.oslo.client.EmbeddingClient;
+import com.cp.oslo.client.SearchIntelligenceClient;
 import com.cp.oslo.util.AnalyzerConfigLoader;
 import com.cp.oslo.service.OpenSearchService;
 import com.cp.oslo.util.CaseUtils;
@@ -30,7 +30,7 @@ public class SearchController {
     private static final int MAX_CONTENT_LENGTH = 200;
 
     private final OpenSearchService openSearchService;
-    private final EmbeddingClient embeddingClient;
+    private final SearchIntelligenceClient searchIntelligenceClient;
     private final AnalyzerConfigLoader analyzerConfigLoader;
 
     private String truncateString(String str) {
@@ -39,10 +39,10 @@ public class SearchController {
         return str.substring(0, MAX_CONTENT_LENGTH);
     }
 
-    @org.springframework.beans.factory.annotation.Value("${embedding.rerank.enabled:false}")
+    @org.springframework.beans.factory.annotation.Value("${search-intelligence.rerank.enabled:false}")
     private boolean rerankEnabled;
 
-    @org.springframework.beans.factory.annotation.Value("${embedding.rerank.window-size:50}")
+    @org.springframework.beans.factory.annotation.Value("${search-intelligence.rerank.window-size:50}")
     private int rerankWindowSize;
 
     /**
@@ -145,7 +145,7 @@ public class SearchController {
             k = Math.max(1, Math.min(k, 100));
         }
 
-        List<Double> queryVector = embeddingClient.embed(query);
+        List<Double> queryVector = searchIntelligenceClient.embed(query);
 
         SearchResponse<Map> response = openSearchService.vectorSearch(indexName, vectorFieldName, queryVector, k);
 
@@ -220,7 +220,7 @@ public class SearchController {
         log.info("하이브리드 검색 요청: index={}, query={}, rerank={}, size={}, requestSize={}",
                 indexName, query, applyRerank, size, requestSize);
 
-        List<Double> queryVector = embeddingClient.embed(query);
+        List<Double> queryVector = searchIntelligenceClient.embed(query);
 
         // OpenSearch에서 1차 검색 수행
         SearchResultDto initialSearchResult = openSearchService.hybridSearch(
@@ -242,7 +242,7 @@ public class SearchController {
                 
                 // 2. 리랭킹 API 호출
 //                long rerankStartTime = System.currentTimeMillis();
-                Map<String, Object> rerankResult = embeddingClient.rerank(query, rerankInputs);
+                Map<String, Object> rerankResult = searchIntelligenceClient.rerank(query, rerankInputs);
                 List<Integer> indices = (List<Integer>) rerankResult.get("indices");
                 List<Double> scores = (List<Double>) rerankResult.get("scores");
 //                long rerankEndTime = System.currentTimeMillis();

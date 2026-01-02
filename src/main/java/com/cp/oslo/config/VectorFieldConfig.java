@@ -11,7 +11,7 @@ import java.util.Map;
  * 벡터 필드 설정
  */
 @Configuration
-@ConfigurationProperties(prefix = "embedding")
+@ConfigurationProperties(prefix = "search-intelligence")
 @Data
 public class VectorFieldConfig {
     

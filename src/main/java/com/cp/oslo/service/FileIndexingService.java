@@ -1,6 +1,6 @@
 package com.cp.oslo.service;
 
-import com.cp.oslo.client.EmbeddingClient;
+import com.cp.oslo.client.SearchIntelligenceClient;
 import com.cp.oslo.config.IndexRegistry;
 import com.cp.oslo.config.SearchIndexProperties; // SearchIndexProperties import 추가
 import com.cp.oslo.domain.TbFile;
@@ -32,7 +32,7 @@ public class FileIndexingService {
 
     private final TbFileRepository tbFileRepository;
     private final OpenSearchService openSearchService;
-    private final EmbeddingClient embeddingClient;
+    private final SearchIntelligenceClient searchIntelligenceClient;
     private final IndexRegistry indexRegistry;
     private final SearchIndexProperties searchIndexProperties;
     private final JdbcTemplate jdbcTemplate; // JdbcTemplate 주입 // SearchIndexProperties 주입
@@ -163,7 +163,7 @@ public class FileIndexingService {
             List<String> subChunks = chunks.subList(i, end);
             
             log.debug("배치 임베딩 요청: {} / {} (청크 {} ~ {})", i / batchSize + 1, (chunks.size() + batchSize - 1) / batchSize, i, end -1);
-            List<List<Double>> subEmbeddings = embeddingClient.embedBatch(subChunks);
+            List<List<Double>> subEmbeddings = searchIntelligenceClient.embedBatch(subChunks);
 
             if (subEmbeddings == null || subEmbeddings.size() != subChunks.size()) {
                 // 서브 배치 임베딩 실패 시 전체 인덱싱 중단 또는 해당 파일 인덱싱 건너뛰기
@@ -266,7 +266,7 @@ public class FileIndexingService {
     private String performOcr(File file, String contentType) {
         try {
             log.info("OCR 요청: {}", file.getName());
-            String ocrText = embeddingClient.ocr(file, contentType);
+            String ocrText = searchIntelligenceClient.ocr(file, contentType);
             if (ocrText == null || ocrText.trim().isEmpty()) {
                 log.warn("OCR 결과가 비어있습니다: {}", file.getName());
                 return "";
@@ -324,7 +324,7 @@ public class FileIndexingService {
     }
 
     public com.cp.oslo.dto.SearchResultDto search(String query, Double textWeight, Integer size) {
-        List<Double> vector = embeddingClient.embed(query);
+        List<Double> vector = searchIntelligenceClient.embed(query);
         return openSearchService.searchNestedHybrid("file", "paragraphs", "content", "embedding", query, vector, textWeight, size);
     }
 
