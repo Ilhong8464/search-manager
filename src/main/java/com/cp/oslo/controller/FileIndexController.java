@@ -1,6 +1,6 @@
 package com.cp.oslo.controller;
 
-import com.cp.oslo.client.EmbeddingClient;
+import com.cp.oslo.client.SearchIntelligenceClient;
 import com.cp.oslo.dto.SearchResultDto;
 import com.cp.oslo.service.FileIndexingService;
 import com.cp.oslo.service.IndexingService;
@@ -25,7 +25,7 @@ public class FileIndexController {
     private final FileIndexingService fileIndexingService;
     private final IndexingService indexingService;
     private final OpenSearchService openSearchService;
-    private final EmbeddingClient embeddingClient;
+    private final SearchIntelligenceClient searchIntelligenceClient;
 
     private final com.cp.oslo.config.SearchIndexProperties searchIndexProperties;
 

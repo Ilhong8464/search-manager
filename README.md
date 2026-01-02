@@ -27,22 +27,22 @@ MariaDB 데이터를 OpenSearch로 인덱싱하고 검색하는 Spring Boot 애�
 - JDK 17 이상
 - MariaDB 10.x 이상
 - Docker 및 Docker Compose
-- Python 3.10+ (Embedding Service용)
+- Python 3.10+ (Search Intelligence Service용)
 
 ### 2. .env 파일 설정
 
-프로젝트의 각 서비스(`search-manager`, `opensearch`, `embedding-service`)는 `.env` 파일을 통해 환경 변수를 설정합니다. `env.example` 파일을 복사하여 `.env` 파일을 생성하고 필요한 값을 설정합니다.
+프로젝트의 각 서비스(`search-manager`, `opensearch`, `search-intelligence`)는 `.env` 파일을 통해 환경 변수를 설정합니다. `env.example` 파일을 복사하여 `.env` 파일을 생성하고 필요한 값을 설정합니다.
 
 ```bash
 cp .env.example .env
-# embedding-service 디렉토리에도 .env 파일 생성
-cp embedding-service/.env.example embedding-service/.env
+# search-intelligence 디렉토리에도 .env 파일 생성
+cp search-intelligence/.env.example search-intelligence/.env
 ```
 
 `.env` 파일에서 다음 변수들을 확인하고 필요에 따라 수정합니다:
 *   `DB_URL`, `DB_USERNAME`, `DB_PASS`: MariaDB 연결 정보
 *   `OPEN_SEARCH_HOST`, `OPEN_SEARCH_PORT_1`, `OPEN_SEARCH_USERNAME`, `OPEN_SEARCH_PASSWORD`: OpenSearch 연결 정보
-*   `EMBEDDING_URL`, `EMBEDDING_PORT`: Embedding Service 연결 정보
+*   `SEARCH_INTELLIGENCE_URL`, `EMBEDDING_PORT`: Search Intelligence Service 연결 정보
 *   `OPENSEARCH_INITIAL_ADMIN_PASSWORD`: OpenSearch 초기 관리자 비밀번호 (필요시 설정)
 
 ### 3. OpenSearch 및 Nori 플러그인 실행
@@ -77,13 +77,13 @@ docker exec -it opensearch-node ./bin/opensearch-plugin install analysis-nori
 # 이 후 2번의 docker run으로 실행
 ```
 
-### 4. Embedding Service 실행
+### 4. Search Intelligence Service 실행
 
-OpenSearch가 실행된 후, 벡터 임베딩을 제공하는 Embedding Service를 실행합니다.
+OpenSearch가 실행된 후, 벡터 임베딩을 제공하는 Search Intelligence Service를 실행합니다.
 
 ```bash
-# 1. embedding-service 디렉토리로 이동
-cd embedding-service
+# 1. search-intelligence 디렉토리로 이동
+cd search-intelligence
 
 # 2. Python 가상 환경 생성 및 활성화
 python3 -m venv venv
@@ -92,9 +92,9 @@ source venv/bin/activate
 # 3. 필요한 라이브러리 설치 (requirements.txt에 명시된 버전으로 설치, uvicorn 포함)
 pip install -r requirements.txt
 
-# 4. Embedding Service 실행 (백그라운드 실행을 권장합니다)
+# 4. Search Intelligence Service 실행 (백그라운드 실행을 권장합니다)
 # .env 파일에 설정된 EMBEDDING_PORT (기본 8000)로 실행됩니다.
-uvicorn embedding_service:app --host 0.0.0.0 --port ${EMBEDDING_PORT:-8000}
+uvicorn search_intelligence:app --host 0.0.0.0 --port ${EMBEDDING_PORT:-8000}
 ```
 
 ### 5. Spring Boot 애플리케이션 실행
@@ -134,7 +134,7 @@ java -jar build/libs/search-manager-1.0.0.jar
 
 ## 빠른 시작: uvw_manual 인덱싱
 
-**OpenSearch 및 Embedding Service가 먼저 실행 중인지 확인하세요.**
+**OpenSearch 및 Search Intelligence Service가 먼저 실행 중인지 확인하세요.**
 
 ```bash
 # 1. 인덱스 생성 (인덱스 생성 + 데이터 동기화 자동 처리)
